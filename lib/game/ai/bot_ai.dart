@@ -27,14 +27,17 @@ class BotAI {
     Cell? closestPrey;
     double preyDistSq = double.infinity;
 
-    final near = cellGrid.queryRadius(center, 700);
+    // Increased search radius for threats and prey to make bots more aware.
+    final near = cellGrid.queryRadius(center, 900); // from 700
     for (final c in near) {
       if (c.ownerId == ownerId) continue;
       final dsq = (c.position - center).distanceSquared;
-      if (c.mass > mass * 1.25 && dsq < 600 * 600 && dsq < threatDistSq) {
+      // Bot is more cautious: considers threats farther away.
+      if (c.mass > mass * 1.25 && dsq < 750 * 750 && dsq < threatDistSq) { // from 600*600
         biggestThreat = c;
         threatDistSq = dsq;
-      } else if (mass > c.mass * 1.25 && dsq < 500 * 500 && dsq < preyDistSq) {
+        // More aggressive: hunts for prey farther away.
+      } else if (mass > c.mass * 1.25 && dsq < 700 * 700 && dsq < preyDistSq) { // from 500*500
         closestPrey = c;
         preyDistSq = dsq;
       }
@@ -52,9 +55,10 @@ class BotAI {
       final mag = d.distance;
       dir = mag > 0 ? d / mag : currentDir;
     } else {
+      // Increased pellet search radius.
       Pellet? best;
       double bd = double.infinity;
-      final pellets = pelletGrid.queryRadius(center, 400);
+      final pellets = pelletGrid.queryRadius(center, 600); // from 400
       for (final p in pellets) {
         final dd = (p.position - center).distanceSquared;
         if (dd < bd) {
@@ -73,14 +77,14 @@ class BotAI {
       }
     }
 
-    // Avoid viruses when big and not full of cells
+    // Slightly reduced virus avoidance so they can navigate tighter spaces.
     if (mass > 130 && cellCount < 16) {
-      final nv = virusGrid.queryRadius(center, 280);
+      final nv = virusGrid.queryRadius(center, 250); // from 280
       for (final v in nv) {
         final d = center - v.position;
         final mag = d.distance;
-        if (mag > 0 && mag < 280) {
-          dir = dir + d / mag * 0.8;
+        if (mag > 0 && mag < 250) { // from 280
+          dir = dir + d / mag * 0.7; // from 0.8
         }
       }
     }
@@ -108,18 +112,18 @@ class BotAI {
     required int cellCount,
     required SpatialGrid<Cell> cellGrid,
   }) {
-    if (cellCount >= 8) return false; // don't over-split
-    if (mass < 70) return false;      // need enough mass to split usefully
+    if (cellCount >= 6) return false; // More conservative about over-splitting
+    if (mass < 60) return false;      // Lowered mass requirement for splitting
 
     final myRadius = sqrt(mass / pi) * 10;
-    final near = cellGrid.queryRadius(center, 700);
+    final near = cellGrid.queryRadius(center, 800); // Increased search radius
     for (final c in near) {
       if (c.ownerId == ownerId) continue;
       final dist = (c.position - center).distance;
-      // Prey is edible, in split-reach range (1.1x–2.6x radius), not already inside eating range.
-      if (mass > c.mass * 1.35 &&
+      // More aggressive split condition: will split for smaller advantages and at greater distances.
+      if (mass > c.mass * 1.3 &&
           dist > myRadius * 1.1 &&
-          dist < myRadius * 2.6) {
+          dist < myRadius * 2.8) { // Increased max split distance
         return true;
       }
     }
@@ -140,7 +144,8 @@ class BotAI {
 
     // Is there a large dangerous enemy nearby that we can't eat?
     bool hasLargeEnemy = false;
-    final nearby = cellGrid.queryRadius(center, 500);
+    // Increased detection range for large enemies.
+    final nearby = cellGrid.queryRadius(center, 600); // from 500
     for (final c in nearby) {
       if (c.ownerId == ownerId) continue;
       if (c.mass > mass * 1.4) {
@@ -150,14 +155,15 @@ class BotAI {
     }
     if (!hasLargeEnemy) return false;
 
-    // Is there a virus roughly in the aim direction within 400 units?
-    final viruses = virusGrid.queryRadius(center, 400);
+    // Is there a virus roughly in the aim direction within 450 units?
+    final viruses = virusGrid.queryRadius(center, 450); // from 400
     for (final v in viruses) {
       final d = v.position - center;
       final mag = d.distance;
       if (mag < 20) continue;
       final aligned = (d / mag).dx * aimDir.dx + (d / mag).dy * aimDir.dy;
-      if (aligned > 0.5) return true; // virus is roughly in front
+      // Increased alignment tolerance, making it easier to decide to shoot.
+      if (aligned > 0.45) return true; // from 0.5
     }
     return false;
   }

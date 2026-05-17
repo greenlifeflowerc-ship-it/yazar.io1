@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'game/game_settings.dart';
 import 'game/skin_registry.dart';
+import 'game/skin_settings.dart';
 import 'screens/main_menu_screen.dart';
 import 'services/auth_service.dart';
+import 'services/storage_service.dart';
 import 'services/supabase_config.dart';
 
 Future<void> main() async {
@@ -16,6 +19,13 @@ Future<void> main() async {
   ]);
 
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+
+  // Initialize Local Storage first.
+  await StorageService.instance.init();
+  
+  // Load settings and skins from storage.
+  GameSettings.instance.loadFromStorage();
+  SkinSettings.instance.loadFromStorage();
 
   // Initialize Supabase BEFORE first frame so AuthService can hook into the
   // session immediately.

@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import '../services/storage_service.dart';
 
 /// Holds the player's currently-selected skin: its asset path plus the
 /// already-decoded `ui.Image` so the painter can blit it synchronously each
@@ -20,11 +21,28 @@ class SkinSettings extends ChangeNotifier {
   bool _loading = false;
   bool get isLoading => _loading;
 
-  Future<void> selectSkin(String? path) async {
+  Future<void> loadFromStorage() async {
+    final path = StorageService.instance.getString('selectedSkin');
+    if (path != null) {
+      await selectSkin(path, save: false);
+    }
+  }
+
+  Future<void> selectSkin(String? path, {bool save = true}) async {
     if (path == _skinPath) return;
     _skinPath = path;
 
-    if (path == null) {
+    if (save) {
+      if (path != null) {
+        StorageService.instance.setString('selectedSkin', path);
+      } else {
+        // We don't really have a 'remove' but setting empty or null works
+        StorageService.instance.setString('selectedSkin', '');
+      }
+    }
+
+    if (path == null || path.isEmpty) {
+      _skinPath = null;
       _skinImage = null;
       notifyListeners();
       return;
@@ -52,6 +70,7 @@ class SkinSettings extends ChangeNotifier {
   void clear() {
     _skinPath = null;
     _skinImage = null;
+    StorageService.instance.setString('selectedSkin', '');
     notifyListeners();
   }
 }

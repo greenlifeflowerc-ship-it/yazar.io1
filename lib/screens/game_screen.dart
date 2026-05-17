@@ -51,8 +51,10 @@ class _GameScreenState extends State<GameScreen>
 
   // Draggable button positions — initialised from GameSettings in initState.
   late final ValueNotifier<Offset> _ejectPos;
+  late final ValueNotifier<Offset> _ejectPos2;
   late final ValueNotifier<Offset> _splitPos;
   bool _draggingEject = false;
+  bool _draggingEject2 = false;
   bool _draggingSplit = false;
 
   // PC Mode support
@@ -62,6 +64,7 @@ class _GameScreenState extends State<GameScreen>
 
   // Hold-to-eject: fires once on touch-down, then every interval until release.
   Timer? _ejectHoldTimer;
+  Timer? _ejectHoldTimer2;
 
   static const double _panelWidth = 150;
   static const double _minimapTop = 12;
@@ -78,6 +81,7 @@ class _GameScreenState extends State<GameScreen>
     // will pick it up; we don't yank the player mid-life.
     AuthService.instance.refreshActiveBoosts();
     _ejectPos = ValueNotifier(GameSettings.instance.ejectBtnFrac);
+    _ejectPos2 = ValueNotifier(GameSettings.instance.ejectBtnFrac2);
     _splitPos = ValueNotifier(GameSettings.instance.splitBtnFrac);
     _engine = GameEngine()..init(nickname: widget.nickname);
     _ticker = createTicker(_onTick)..start();
@@ -89,7 +93,7 @@ class _GameScreenState extends State<GameScreen>
 
   void _onTick(Duration elapsed) {
     final dt = (elapsed - _lastTick).inMicroseconds / 1e6;
-    
+
     // FPS Capping logic
     final cap = GameSettings.instance.fpsCap;
     final minDt = 1.0 / cap;
@@ -179,11 +183,13 @@ class _GameScreenState extends State<GameScreen>
   @override
   void dispose() {
     _ejectHoldTimer?.cancel();
+    _ejectHoldTimer2?.cancel();
     _ticker.dispose();
     _frame.dispose();
     _hudTick.dispose();
     _miniTick.dispose();
     _ejectPos.dispose();
+    _ejectPos2.dispose();
     _splitPos.dispose();
     _gameFocusNode.dispose();
     super.dispose();
@@ -197,7 +203,7 @@ class _GameScreenState extends State<GameScreen>
 
     _engine.attackMode = true;
     _engine.doEject(); // fire on first touch immediately
-    
+
     // The timer now respects the user's "Feed speed" setting.
     // We allow it to go down to 1ms for true macro speed.
     final speedMult = GameSettings.instance.feedSpeedMultiplier;
@@ -212,6 +218,28 @@ class _GameScreenState extends State<GameScreen>
   void _endEjectHold() {
     _ejectHoldTimer?.cancel();
     _ejectHoldTimer = null;
+    _engine.attackMode = false;
+  }
+
+  void _startEjectHold2() {
+    if (_draggingEject2) return;
+    if (_ejectHoldTimer2 != null) return; 
+
+    _engine.attackMode = true;
+    _engine.doEject(); 
+
+    final speedMult = GameSettings.instance.feedSpeedMultiplier2;
+    final ms = (100 / speedMult).round().clamp(1, 500);
+
+    _ejectHoldTimer2 = Timer.periodic(
+      Duration(milliseconds: ms),
+      (_) => _engine.doEject(),
+    );
+  }
+
+  void _endEjectHold2() {
+    _ejectHoldTimer2?.cancel();
+    _ejectHoldTimer2 = null;
     _engine.attackMode = false;
   }
 
@@ -281,6 +309,15 @@ class _GameScreenState extends State<GameScreen>
                   _startEjectHold();
                 } else if (isUp) {
                   _endEjectHold();
+                }
+                return KeyEventResult.handled;
+              }
+
+              if (event.logicalKey == LogicalKeyboardKey.keyE) {
+                if (isDown) {
+                  _startEjectHold2();
+                } else if (isUp) {
+                  _endEjectHold2();
                 }
                 return KeyEventResult.handled;
               }
@@ -492,7 +529,7 @@ class _GameScreenState extends State<GameScreen>
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text(
-                              'PC Mode: Move with mouse • Split: Space • Feed: W',
+                              'PC Mode: Move with mouse • Split: Space • Feed: W / E',
                               style: GoogleFonts.baloo2(
                                 color: Colors.white70,
                                 fontSize: 13,
@@ -504,7 +541,7 @@ class _GameScreenState extends State<GameScreen>
                       ),
                     ),
 
-                  // ── Eject button — freely draggable ─────────────────────────
+                  // ── Eject button 1 — freely draggable ─────────────────────────
                   if (!pcMode)
                     ValueListenableBuilder<Offset>(
                       valueListenable: _ejectPos,
@@ -560,6 +597,72 @@ class _GameScreenState extends State<GameScreen>
                                     size: 60 * btnScale,
                                     enabled: _engine.canEject && !_draggingEject,
                                     hint: _draggingEject ? 'hold & drag' : null,
+                                    builder: (_) => const EjectIcon(),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+
+                  // ── Eject button 2 — freely draggable ─────────────────────────
+                  if (!pcMode)
+                    ValueListenableBuilder<Offset>(
+                      valueListenable: _ejectPos2,
+                      builder: (context, pos, _) {
+                        final half = 30.0 * btnScale;
+                        return Positioned(
+                          left: pos.dx * size.width - half,
+                          top: pos.dy * size.height - half,
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onLongPressStart: (_) =>
+                                setState(() => _draggingEject2 = true),
+                            onLongPressMoveUpdate: (d) {
+                              final newPos = Offset(
+                                (d.globalPosition.dx / size.width).clamp(0.04, 0.96),
+                                (d.globalPosition.dy / size.height).clamp(0.04, 0.96),
+                              );
+                              _ejectPos2.value = newPos;
+                              GameSettings.instance.ejectBtnFrac2 = newPos;
+                            },
+                            onLongPressEnd: (_) =>
+                                setState(() => _draggingEject2 = false),
+                            child: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                // Drag-mode glow ring
+                                if (_draggingEject2)
+                                  Positioned.fill(
+                                    child: IgnorePointer(
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          border: Border.all(
+                                              color: Colors.yellowAccent, width: 3),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.yellowAccent
+                                                  .withValues(alpha: 0.45),
+                                              blurRadius: 18,
+                                              spreadRadius: 4,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ValueListenableBuilder<int>(
+                                  valueListenable: _hudTick,
+                                  builder: (ctx, tick, child) => GameButton(
+                                    onPressStart: _startEjectHold2,
+                                    onPressEnd: _endEjectHold2,
+                                    color: const Color(0xFFFFB300),
+                                    size: 60 * btnScale,
+                                    enabled: _engine.canEject && !_draggingEject2,
+                                    hint: _draggingEject2 ? 'hold & drag' : null,
                                     builder: (_) => const EjectIcon(),
                                   ),
                                 ),

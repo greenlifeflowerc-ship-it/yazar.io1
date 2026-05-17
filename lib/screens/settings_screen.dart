@@ -213,11 +213,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: (v) => _s.ejectDistanceMultiplier = v,
           ),
           _sliderRow(
-            'Feed speed',
+            'Feed speed 1',
             _s.feedSpeedMultiplier,
             min: 0.5,
             max: 100.0,
             onChanged: (v) => _s.feedSpeedMultiplier = v,
+          ),
+          _sliderRow(
+            'Feed speed 2',
+            _s.feedSpeedMultiplier2,
+            min: 0.5,
+            max: 100.0,
+            onChanged: (v) => _s.feedSpeedMultiplier2 = v,
           ),
           _sliderRow(
             'Eject speed',
@@ -347,7 +354,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Padding(
               padding: const EdgeInsets.only(left: 4, bottom: 4),
               child: Text(
-                'Use mouse movement with Space to split and W to feed.',
+                'Use mouse movement with Space to split and W/E to feed.',
                 style: GoogleFonts.baloo2(
                   color: AppColors.textMuted,
                   fontSize: 11,

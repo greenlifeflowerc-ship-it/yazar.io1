@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../services/storage_service.dart';
 
 const List<Color> kBackgroundPalette = [
   Color(0xFFF5F5F5), // off-white (default)
@@ -20,6 +21,7 @@ class GameSettings extends ChangeNotifier {
   set backgroundColor(Color v) {
     if (_backgroundColor.toARGB32() == v.toARGB32()) return;
     _backgroundColor = v;
+    StorageService.instance.setInt('backgroundColor', v.toARGB32());
     notifyListeners();
   }
 
@@ -28,6 +30,7 @@ class GameSettings extends ChangeNotifier {
   set showGrid(bool v) {
     if (_showGrid == v) return;
     _showGrid = v;
+    StorageService.instance.setBool('showGrid', v);
     notifyListeners();
   }
 
@@ -36,6 +39,7 @@ class GameSettings extends ChangeNotifier {
   set showMassLabels(bool v) {
     if (_showMassLabels == v) return;
     _showMassLabels = v;
+    StorageService.instance.setBool('showMassLabels', v);
     notifyListeners();
   }
 
@@ -44,6 +48,7 @@ class GameSettings extends ChangeNotifier {
   set showFps(bool v) {
     if (_showFps == v) return;
     _showFps = v;
+    StorageService.instance.setBool('showFps', v);
     notifyListeners();
   }
 
@@ -52,6 +57,7 @@ class GameSettings extends ChangeNotifier {
   set showMinimap(bool v) {
     if (_showMinimap == v) return;
     _showMinimap = v;
+    StorageService.instance.setBool('showMinimap', v);
     notifyListeners();
   }
 
@@ -59,10 +65,10 @@ class GameSettings extends ChangeNotifier {
   double _zoomMultiplier = 1.0;
   double get zoomMultiplier => _zoomMultiplier;
   set zoomMultiplier(double v) {
-    // Increased range: 0.2 to 10.0
     final c = v.clamp(0.2, 10.0);
     if (_zoomMultiplier == c) return;
     _zoomMultiplier = c;
+    StorageService.instance.setDouble('zoomMultiplier', c);
     notifyListeners();
   }
 
@@ -72,6 +78,7 @@ class GameSettings extends ChangeNotifier {
     final c = v.clamp(0.5, 2.5);
     if (_ejectSpeedMultiplier == c) return;
     _ejectSpeedMultiplier = c;
+    StorageService.instance.setDouble('ejectSpeedMultiplier', c);
     notifyListeners();
   }
 
@@ -81,16 +88,27 @@ class GameSettings extends ChangeNotifier {
     final c = v.clamp(0.5, 2.5);
     if (_ejectDistanceMultiplier == c) return;
     _ejectDistanceMultiplier = c;
+    StorageService.instance.setDouble('ejectDistanceMultiplier', c);
     notifyListeners();
   }
 
   double _feedSpeedMultiplier = 1.0;
   double get feedSpeedMultiplier => _feedSpeedMultiplier;
   set feedSpeedMultiplier(double v) {
-    // Max increased to 100.0
     final c = v.clamp(0.5, 100.0);
     if (_feedSpeedMultiplier == c) return;
     _feedSpeedMultiplier = c;
+    StorageService.instance.setDouble('feedSpeedMultiplier', c);
+    notifyListeners();
+  }
+
+  double _feedSpeedMultiplier2 = 1.0;
+  double get feedSpeedMultiplier2 => _feedSpeedMultiplier2;
+  set feedSpeedMultiplier2(double v) {
+    final c = v.clamp(0.5, 100.0);
+    if (_feedSpeedMultiplier2 == c) return;
+    _feedSpeedMultiplier2 = c;
+    StorageService.instance.setDouble('feedSpeedMultiplier2', c);
     notifyListeners();
   }
 
@@ -99,6 +117,7 @@ class GameSettings extends ChangeNotifier {
   set stopOnRelease(bool v) {
     if (_stopOnRelease == v) return;
     _stopOnRelease = v;
+    StorageService.instance.setBool('stopOnRelease', v);
     notifyListeners();
   }
 
@@ -109,6 +128,7 @@ class GameSettings extends ChangeNotifier {
     final c = v.clamp(0.6, 1.5);
     if (_buttonScale == c) return;
     _buttonScale = c;
+    StorageService.instance.setDouble('buttonScale', c);
     notifyListeners();
   }
 
@@ -117,6 +137,7 @@ class GameSettings extends ChangeNotifier {
   set joystickOnRight(bool v) {
     if (_joystickOnRight == v) return;
     _joystickOnRight = v;
+    StorageService.instance.setBool('joystickOnRight', v);
     notifyListeners();
   }
 
@@ -126,6 +147,7 @@ class GameSettings extends ChangeNotifier {
     if (_pcMode == v) return;
     _pcMode = v;
     _persistPcMode(v);
+    StorageService.instance.setBool('pcMode', v);
     notifyListeners();
   }
 
@@ -136,6 +158,42 @@ class GameSettings extends ChangeNotifier {
         client.auth.updateUser(UserAttributes(data: {'pcMode': v}));
       }
     } catch (_) {}
+  }
+
+  void loadFromStorage() {
+    final storage = StorageService.instance;
+    
+    _backgroundColor = Color(storage.getInt('backgroundColor') ?? 0xFFF5F5F5);
+    _showGrid = storage.getBool('showGrid') ?? true;
+    _showMassLabels = storage.getBool('showMassLabels') ?? true;
+    _showFps = storage.getBool('showFps') ?? true;
+    _showMinimap = storage.getBool('showMinimap') ?? true;
+    _zoomMultiplier = storage.getDouble('zoomMultiplier') ?? 1.0;
+    _ejectSpeedMultiplier = storage.getDouble('ejectSpeedMultiplier') ?? 1.0;
+    _ejectDistanceMultiplier = storage.getDouble('ejectDistanceMultiplier') ?? 1.0;
+    _feedSpeedMultiplier = storage.getDouble('feedSpeedMultiplier') ?? 1.0;
+    _feedSpeedMultiplier2 = storage.getDouble('feedSpeedMultiplier2') ?? 1.0;
+    _stopOnRelease = storage.getBool('stopOnRelease') ?? false;
+    _buttonScale = storage.getDouble('buttonScale') ?? 1.0;
+    _joystickOnRight = storage.getBool('joystickOnRight') ?? false;
+    _pcMode = storage.getBool('pcMode') ?? false;
+    _darkMode = storage.getBool('darkMode') ?? false;
+    _graphicsQuality = storage.getInt('graphicsQuality') ?? 2;
+    _fpsCap = storage.getInt('fpsCap') ?? 60;
+
+    final ejDx = storage.getOffsetDx('ejectBtn');
+    final ejDy = storage.getOffsetDy('ejectBtn');
+    if (ejDx != null && ejDy != null) _ejectBtnFrac = Offset(ejDx, ejDy);
+
+    final ejDx2 = storage.getOffsetDx('ejectBtn2');
+    final ejDy2 = storage.getOffsetDy('ejectBtn2');
+    if (ejDx2 != null && ejDy2 != null) _ejectBtnFrac2 = Offset(ejDx2, ejDy2);
+
+    final spDx = storage.getOffsetDx('splitBtn');
+    final spDy = storage.getOffsetDy('splitBtn');
+    if (spDx != null && spDy != null) _splitBtnFrac = Offset(spDx, spDy);
+
+    notifyListeners();
   }
 
   void initFromSupabase() {
@@ -149,14 +207,24 @@ class GameSettings extends ChangeNotifier {
     } catch (_) {}
   }
 
-  // Normalised button positions (0-1 fraction of screen width/height).
-  // Stored so dragged positions survive screen rebuilds.
+  // Normalised button positions
   Offset _ejectBtnFrac = const Offset(0.80, 0.85);
   Offset get ejectBtnFrac => _ejectBtnFrac;
   set ejectBtnFrac(Offset v) {
     final c = Offset(v.dx.clamp(0.04, 0.96), v.dy.clamp(0.04, 0.96));
     if (_ejectBtnFrac == c) return;
     _ejectBtnFrac = c;
+    StorageService.instance.setOffset('ejectBtn', c.dx, c.dy);
+    notifyListeners();
+  }
+
+  Offset _ejectBtnFrac2 = const Offset(0.70, 0.85);
+  Offset get ejectBtnFrac2 => _ejectBtnFrac2;
+  set ejectBtnFrac2(Offset v) {
+    final c = Offset(v.dx.clamp(0.04, 0.96), v.dy.clamp(0.04, 0.96));
+    if (_ejectBtnFrac2 == c) return;
+    _ejectBtnFrac2 = c;
+    StorageService.instance.setOffset('ejectBtn2', c.dx, c.dy);
     notifyListeners();
   }
 
@@ -166,6 +234,7 @@ class GameSettings extends ChangeNotifier {
     final c = Offset(v.dx.clamp(0.04, 0.96), v.dy.clamp(0.04, 0.96));
     if (_splitBtnFrac == c) return;
     _splitBtnFrac = c;
+    StorageService.instance.setOffset('splitBtn', c.dx, c.dy);
     notifyListeners();
   }
 
@@ -175,27 +244,29 @@ class GameSettings extends ChangeNotifier {
   set darkMode(bool v) {
     if (_darkMode == v) return;
     _darkMode = v;
-    // Sync game background so the world matches the UI theme.
-    _backgroundColor =
-        v ? const Color(0xFF1A1A1A) : const Color(0xFFF5F5F5);
+    _backgroundColor = v ? const Color(0xFF1A1A1A) : const Color(0xFFF5F5F5);
+    StorageService.instance.setBool('darkMode', v);
+    StorageService.instance.setInt('backgroundColor', _backgroundColor.toARGB32());
     notifyListeners();
   }
 
-  // Graphics Quality (Low, Medium, High)
-  int _graphicsQuality = 2; // 0: Low, 1: Medium, 2: High
+  // Graphics Quality
+  int _graphicsQuality = 2;
   int get graphicsQuality => _graphicsQuality;
   set graphicsQuality(int v) {
     if (_graphicsQuality == v) return;
     _graphicsQuality = v;
+    StorageService.instance.setInt('graphicsQuality', v);
     notifyListeners();
   }
 
-  // FPS Cap (60, 90, 120)
+  // FPS Cap
   int _fpsCap = 60;
   int get fpsCap => _fpsCap;
   set fpsCap(int v) {
     if (_fpsCap == v) return;
     _fpsCap = v;
+    StorageService.instance.setInt('fpsCap', v);
     notifyListeners();
   }
 
@@ -221,15 +292,41 @@ class GameSettings extends ChangeNotifier {
     _ejectSpeedMultiplier = 1.0;
     _ejectDistanceMultiplier = 1.0;
     _feedSpeedMultiplier = 1.0;
+    _feedSpeedMultiplier2 = 1.0;
     _stopOnRelease = false;
     _buttonScale = 1.0;
     _joystickOnRight = false;
     _pcMode = false;
     _ejectBtnFrac = const Offset(0.80, 0.85);
+    _ejectBtnFrac2 = const Offset(0.70, 0.85);
     _splitBtnFrac = const Offset(0.91, 0.80);
     _darkMode = false;
     _graphicsQuality = 2;
     _fpsCap = 60;
+    
+    // Clear storage or just let setters handle it. Better to clear or overwrite.
+    final storage = StorageService.instance;
+    storage.setInt('backgroundColor', _backgroundColor.toARGB32());
+    storage.setBool('showGrid', true);
+    storage.setBool('showMassLabels', true);
+    storage.setBool('showFps', true);
+    storage.setBool('showMinimap', true);
+    storage.setDouble('zoomMultiplier', 1.0);
+    storage.setDouble('ejectSpeedMultiplier', 1.0);
+    storage.setDouble('ejectDistanceMultiplier', 1.0);
+    storage.setDouble('feedSpeedMultiplier', 1.0);
+    storage.setDouble('feedSpeedMultiplier2', 1.0);
+    storage.setBool('stopOnRelease', false);
+    storage.setDouble('buttonScale', 1.0);
+    storage.setBool('joystickOnRight', false);
+    storage.setBool('pcMode', false);
+    storage.setBool('darkMode', false);
+    storage.setInt('graphicsQuality', 2);
+    storage.setInt('fpsCap', 60);
+    storage.setOffset('ejectBtn', 0.80, 0.85);
+    storage.setOffset('ejectBtn2', 0.70, 0.85);
+    storage.setOffset('splitBtn', 0.91, 0.80);
+
     notifyListeners();
   }
 }

@@ -23,7 +23,7 @@ class GameConstants {
   static const double gridUnit = 50;
   static const int targetPellets = 8000;
   static const int targetViruses = 30;
-  static const int targetBots = 30;
+  static const int targetBots = 70;
 
   // ---------- Cell limits ----------
   static const int maxCellsPerPlayer = 16;
@@ -395,10 +395,10 @@ class GameEngine {
     // Mass Boost: only the human player gets the multiplier; bots spawn at
     // baseline. The multiplier is read fresh on every spawn so a boost that
     // expires between matches won't keep applying.
-    // TEMPORARY: Starting mass set to 1000 for testing as requested.
+    // BOTS now start at 100 mass as requested.
     final startingMass = p.isHuman
-        ? (1000 * AuthService.instance.activeMassMultiplier).clamp(1000, 1e9).toDouble()
-        : 34.0;
+        ? (76   * AuthService.instance.activeMassMultiplier).clamp(76, 1e9).toDouble()
+        : 100.0;
 
     p.cells.clear();
     p.cells.add(Cell(
@@ -524,9 +524,12 @@ class GameEngine {
         v.position += v.velocity * dt;
         v.velocity = v.velocity * virusFric;
       }
+      // Virus wall clamp: Agar.io Mobile style (partial overlap)
+      final r = v.radius;
+      final inset = r * 0.5; // allow 50% overlap
       v.position = Offset(
-        v.position.dx.clamp(v.radius, GameConstants.worldSize - v.radius),
-        v.position.dy.clamp(v.radius, GameConstants.worldSize - v.radius),
+        v.position.dx.clamp(inset, GameConstants.worldSize - inset),
+        v.position.dy.clamp(inset, GameConstants.worldSize - inset),
       );
     }
 
@@ -563,7 +566,8 @@ class GameEngine {
       pellets.add(_spawnPellet());
     }
     for (final p in players) {
-      if (!p.isHuman && p.isDead && now - p.deathTime > 3) {
+      // Bots respawn faster: delay reduced from 3s to 0.5s.
+      if (!p.isHuman && p.isDead && now - p.deathTime > 0.5) {
         _spawnPlayer(p);
       }
     }
@@ -654,10 +658,13 @@ class GameEngine {
       }
 
       // World clamp.
+      // Agar.io Mobile style: Allow cells to "sink" slightly into the wall.
+      // We allow ~25% of the cell radius to be outside the playable area.
       final r = c.radius;
+      final inset = r * 0.75; 
       c.position = Offset(
-        c.position.dx.clamp(r, GameConstants.worldSize - r),
-        c.position.dy.clamp(r, GameConstants.worldSize - r),
+        c.position.dx.clamp(inset, GameConstants.worldSize - inset),
+        c.position.dy.clamp(inset, GameConstants.worldSize - inset),
       );
     }
   }

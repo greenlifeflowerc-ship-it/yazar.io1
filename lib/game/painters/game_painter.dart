@@ -32,21 +32,27 @@ class GamePainter extends CustomPainter {
     canvas.scale(zoom);
     canvas.translate(-engine.cameraPos.dx, -engine.cameraPos.dy);
 
+    // Calculate viewport rectangle in world coordinates
     final viewW = size.width / zoom;
     final viewH = size.height / zoom;
+    
+    // Increased the margin slightly for smoother rendering (Culling)
+    final renderMargin = 150.0 / zoom; 
     final viewport = Rect.fromCenter(
       center: engine.cameraPos,
-      width: viewW + 400,
-      height: viewH + 400,
+      width: viewW + renderMargin,
+      height: viewH + renderMargin,
     );
 
     if (settings.showGrid) _drawGrid(canvas, viewport, settings.gridColor);
     _drawWorldBorder(canvas, settings.borderColor);
+    
+    // Using Grid Querying for everything to optimize performance
     _drawPellets(canvas, viewport);
     _drawEjected(canvas, viewport);
     _drawParticles(canvas, viewport);
 
-    // Unified drawing for viruses and cells to respect mass-based Z-index.
+    // Unified drawing for viruses and cells
     _drawEntities(canvas, viewport);
 
     canvas.restore();
@@ -60,10 +66,12 @@ class GamePainter extends CustomPainter {
     final endX = (view.right / _gridSpacing).ceil() * _gridSpacing;
     final startY = (view.top / _gridSpacing).floor() * _gridSpacing;
     final endY = (view.bottom / _gridSpacing).ceil() * _gridSpacing;
+    
     final left = max(0.0, view.left);
     final right = min(GameConstants.worldSize, view.right);
     final top = max(0.0, view.top);
     final bottom = min(GameConstants.worldSize, view.bottom);
+    
     for (double x = startX; x <= endX; x += _gridSpacing) {
       if (x < 0 || x > GameConstants.worldSize) continue;
       canvas.drawLine(Offset(x, top), Offset(x, bottom), paint);
@@ -78,7 +86,7 @@ class GamePainter extends CustomPainter {
     final paint = Paint()
       ..color = borderColor
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 6 / engine.cameraZoom;
+      ..strokeWidth = 8 / engine.cameraZoom;
     canvas.drawRect(
       const Rect.fromLTWH(
         0,
@@ -92,9 +100,9 @@ class GamePainter extends CustomPainter {
 
   void _drawPellets(Canvas canvas, Rect view) {
     final paint = Paint();
+    // Use spatial grid query for pellets (major optimization)
     final near = engine.pelletGrid.queryRect(view);
     for (final p in near) {
-      if (!view.contains(p.position)) continue;
       final pulse = 1 + sin(p.pulsePhase) * 0.05;
       paint.color = p.color;
       canvas.drawCircle(p.position, Pellet.radius * pulse, paint);
@@ -102,10 +110,9 @@ class GamePainter extends CustomPainter {
   }
 
   void _drawEjected(Canvas canvas, Rect view) {
+    // Use spatial grid query for ejected mass
     final near = engine.ejectGrid.queryRect(view);
     for (final EjectedMass e in near) {
-      if (!view.contains(e.position)) continue;
-
       final radius = e.radius;
       final gradient = ui.Gradient.radial(
         e.position,
@@ -130,6 +137,7 @@ class GamePainter extends CustomPainter {
 
   void _drawParticles(Canvas canvas, Rect view) {
     final paint = Paint();
+    // Particles are few, but still checking against viewport
     for (final p in engine.particles) {
       if (!view.contains(p.position)) continue;
       final a = (p.life / p.maxLife).clamp(0.0, 1.0);
@@ -140,27 +148,32 @@ class GamePainter extends CustomPainter {
 
   void _drawEntities(Canvas canvas, Rect view) {
     final entities = <_DrawableEntity>[];
-
     final skinByOwner = <String, ui.Image>{};
+
+    // Use Spatial Grid to find ONLY visible cells
+    final visibleCells = engine.cellGrid.queryRect(view);
+    for (final c in visibleCells) {
+      entities.add(_DrawableEntity(mass: c.mass, cell: c));
+    }
+
+    // Cache skins for visible players
     for (final p in engine.players) {
       if (p.isDead) continue;
-      for (final c in p.cells) {
-        if (view.contains(c.position)) {
-          entities.add(_DrawableEntity(mass: c.mass, cell: c));
-        }
-      }
-      final skin = p.skinImage;
-      if (skin != null) skinByOwner[p.id] = skin;
-    }
-
-    for (final v in engine.viruses) {
-      if (view.contains(v.position)) {
-        entities.add(_DrawableEntity(mass: v.mass, virus: v));
+      // If player has any visible cells, cache the skin
+      bool isVisible = p.cells.any((c) => visibleCells.contains(c));
+      if (isVisible) {
+        final skin = p.skinImage;
+        if (skin != null) skinByOwner[p.id] = skin;
       }
     }
 
-    // Sort by mass so smaller objects are drawn first.
-    // If a cell is smaller than a virus, the virus draws after it (on top).
+    // Use Spatial Grid to find ONLY visible viruses
+    final visibleViruses = engine.virusGrid.queryRect(view);
+    for (final v in visibleViruses) {
+      entities.add(_DrawableEntity(mass: v.mass, virus: v));
+    }
+
+    // Sort by mass so smaller objects are drawn first (Z-Index)
     entities.sort((a, b) => a.mass.compareTo(b.mass));
 
     final fillPaint = Paint();
@@ -180,7 +193,6 @@ class GamePainter extends CustomPainter {
       }
     }
 
-    // Draw direction arrow for human player outside the cell loop
     if (!engine.humanPlayer.isDead && engine.humanPlayer.cells.isNotEmpty) {
       _drawMobileDirectionArrow(canvas);
     }
@@ -194,19 +206,16 @@ class GamePainter extends CustomPainter {
     final center = player.centerOfMass;
     final unit = dir / dir.distance;
     
-    // Find the boundary radius that covers all cells
     double maxDist = 0;
     for (final c in player.cells) {
       final d = (c.position - center).distance + c.radius;
       if (d > maxDist) maxDist = d;
     }
 
-    // Position the arrow closer to the group boundary (10.0 instead of 40.0)
     final arrowDist = maxDist + 10.0;
     final arrowCenter = center + unit * arrowDist;
     final perp = Offset(-unit.dy, unit.dx);
 
-    // More compact, "V" shaped pointer for a cleaner look
     final length = 30.0 / engine.cameraZoom;
     final width = 35.0 / engine.cameraZoom;
     final backIndentation = 8.0 / engine.cameraZoom;
@@ -219,7 +228,7 @@ class GamePainter extends CustomPainter {
     final path = Path()
       ..moveTo(tip.dx, tip.dy)
       ..lineTo(p1.dx, p1.dy)
-      ..lineTo(backCenter.dx, backCenter.dy) // Indented back for a "V" look
+      ..lineTo(backCenter.dx, backCenter.dy)
       ..lineTo(p2.dx, p2.dy)
       ..close();
 
@@ -244,11 +253,9 @@ class GamePainter extends CustomPainter {
       ..strokeWidth = 3 / engine.cameraZoom;
 
     final path = Path();
-    // Many small spikes to create a "vibrating/jagged" fine edge.
     const spikes = 45;
     for (int i = 0; i <= spikes * 2; i++) {
       final ang = (i / (spikes * 2)) * 2 * pi;
-      // Slightly increased depth from 0.97 to 0.94 for better visibility.
       final r = (i % 2 == 0) ? v.radius : v.radius * 0.94;
       final x = v.position.dx + cos(ang) * r;
       final y = v.position.dy + sin(ang) * r;
@@ -273,7 +280,6 @@ class GamePainter extends CustomPainter {
     final baseR = c.radius;
     final quality = GameSettings.instance.graphicsQuality;
     
-    // Core drawing logic for a perfect circle
     void drawPerfectCircle(Canvas canvas, Offset pos, double r) {
       if (skin != null) {
         canvas.drawCircle(pos, r, fillPaint);
@@ -298,16 +304,13 @@ class GamePainter extends CustomPainter {
     strokePaint.color = _darken(c.color, 0.25);
     strokePaint.strokeWidth = max(2.0, c.radius * 0.05);
 
-    // If no active bumps or quality is Low, use the high-performance perfect circle path
     if (c.bumps.isEmpty || quality == 0) {
       drawPerfectCircle(canvas, c.position, baseR);
       _drawCellLabel(canvas, c);
       return;
     }
 
-    // If there ARE bumps, draw a high-vertex smooth path with minimal deformation (max 1%)
     final path = Path();
-    // Vertex count based on quality: Med=60, High=120
     final vertices = quality == 1 ? 60 : 120;
     for (int i = 0; i <= vertices; i++) {
       final vAng = (i / vertices) * 2 * pi;
@@ -407,7 +410,7 @@ class GamePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant GamePainter oldDelegate) => false;
+  bool shouldRepaint(covariant GamePainter oldDelegate) => true;
 }
 
 class _DrawableEntity {
