@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../services/auth_service.dart';
 import 'ai/bot_ai.dart';
 import 'entities/cell.dart';
 import 'entities/ejected_mass.dart';
@@ -366,12 +367,19 @@ class GameEngine {
       if (safe) break;
       pos = _randomWorldPos(margin: 600);
     }
+    // Mass Boost: only the human player gets the multiplier; bots spawn at
+    // baseline. The multiplier is read fresh on every spawn so a boost that
+    // expires between matches won't keep applying.
+    final startingMass = p.isHuman
+        ? (34 * AuthService.instance.activeMassMultiplier).clamp(34, 1e9).toDouble()
+        : 34.0;
+
     p.cells.clear();
     p.cells.add(Cell(
       id: '${p.id}_c0_${elapsed.toStringAsFixed(2)}',
       ownerId: p.id,
       position: pos,
-      mass: 34,
+      mass: startingMass,
       color: p.color,
       name: p.name,
       // A spawn cell is immediately merge-ready — it has nothing to merge with
@@ -381,7 +389,7 @@ class GameEngine {
       isFreshSplit: false,
     ));
     p.isDead = false;
-    p.highestMass = 34;
+    p.highestMass = startingMass;
     p.eatenCount = 0;
     p.aliveSince = elapsed;
   }
