@@ -6,9 +6,12 @@ import '../widgets/background_painter.dart';
 import '../widgets/currency_display.dart';
 import '../widgets/main_action_button.dart';
 import '../game/skin_settings.dart';
+import '../services/auth_service.dart';
+import '../widgets/login_popup.dart';
 import '../widgets/menu_icon_button.dart';
 import '../widgets/shop_button.dart';
 import 'game_screen.dart';
+import 'profile_screen.dart';
 import 'settings_screen.dart';
 import 'skin_chooser_screen.dart';
 
@@ -22,13 +25,58 @@ class MainMenuScreen extends StatefulWidget {
 class _MainMenuScreenState extends State<MainMenuScreen> {
   final TextEditingController _nicknameController = TextEditingController();
 
-  final int _dna = 26281;
-  final int _coins = 996797;
-  final int _level = 5;
-  final double _xpProgress = 0.55;
+  // Fallback values used only when the player is not logged in.
+  static const int _guestDna = 0;
+  static const int _guestCoins = 0;
+  static const int _guestLevel = 1;
+  static const double _guestXpProgress = 0.0;
+
+  bool _autoPopupShown = false;
+
+  @override
+  void initState() {
+    super.initState();
+    AuthService.instance.addListener(_onAuthChanged);
+    // Refresh boost state (auto-expires stale rows on the server) every time
+    // we land on the main menu.
+    AuthService.instance.refreshActiveBoosts();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowLoginPopup());
+  }
+
+  void _onAuthChanged() {
+    if (!mounted) return;
+    setState(() {});
+    // Pre-fill the nickname field from the profile username if the user
+    // hasn't typed anything themselves.
+    final username = AuthService.instance.profile?.username;
+    if (username != null &&
+        username.isNotEmpty &&
+        _nicknameController.text.isEmpty) {
+      _nicknameController.text = username;
+    }
+  }
+
+  Future<void> _maybeShowLoginPopup() async {
+    if (_autoPopupShown) return;
+    if (AuthService.instance.isLoggedIn) return;
+    _autoPopupShown = true;
+    await LoginPopup.show(context, dismissible: true);
+  }
+
+  void _openProfile() {
+    if (AuthService.instance.isLoggedIn) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const ProfileScreen()),
+      );
+    } else {
+      LoginPopup.show(context, dismissible: true);
+    }
+  }
 
   @override
   void dispose() {
+    AuthService.instance.removeListener(_onAuthChanged);
     _nicknameController.dispose();
     super.dispose();
   }
@@ -120,6 +168,9 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   }
 
   Widget _topRight() {
+    final profile = AuthService.instance.profile;
+    final dna = profile?.dna ?? _guestDna;
+    final coins = profile?.coins ?? _guestCoins;
     return Positioned(
       top: 14,
       right: 14,
@@ -128,13 +179,13 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
           CurrencyDisplay(
             icon: Icons.bubble_chart,
             iconColor: AppColors.dnaYellow,
-            value: _dna,
+            value: dna,
           ),
           const SizedBox(width: 10),
           CurrencyDisplay(
             icon: Icons.monetization_on,
             iconColor: AppColors.coinGreen,
-            value: _coins,
+            value: coins,
           ),
         ],
       ),
@@ -451,6 +502,9 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   }
 
   Widget _bottomRight() {
+    final profile = AuthService.instance.profile;
+    final level = profile?.level ?? _guestLevel;
+    final progress = profile?.xpProgress ?? _guestXpProgress;
     return Positioned(
       right: 14,
       bottom: 14,
@@ -459,7 +513,14 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         children: [
           ShopButton(onTap: () => debugPrint('Shop pressed')),
           const SizedBox(width: 10),
-          XpBar(level: _level, progress: _xpProgress),
+          // The XP bar in the bottom-right is the profile entry point: tap
+          // opens the profile screen, or the login popup if there's no
+          // session yet.
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _openProfile,
+            child: XpBar(level: level, progress: progress),
+          ),
         ],
       ),
     );

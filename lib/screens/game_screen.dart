@@ -8,6 +8,9 @@ import 'package:intl/intl.dart';
 import '../game/game_engine.dart';
 import '../game/game_settings.dart';
 import '../game/painters/game_painter.dart';
+import '../models/boost.dart';
+import '../services/auth_service.dart';
+import '../services/profile_service.dart';
 import '../widgets/death_screen.dart';
 import '../widgets/game_button.dart';
 import '../widgets/live_leaderboard.dart';
@@ -56,6 +59,11 @@ class _GameScreenState extends State<GameScreen>
   @override
   void initState() {
     super.initState();
+    // Boost cache is normally fresh (AuthService refreshes on login + when
+    // the main menu opens). Fire-and-forget another refresh to catch
+    // expirations — if it produces a new multiplier the next death/respawn
+    // will pick it up; we don't yank the player mid-life.
+    AuthService.instance.refreshActiveBoosts();
     _engine = GameEngine()..init(nickname: widget.nickname);
     _ticker = createTicker(_onTick)..start();
   }
@@ -80,6 +88,45 @@ class _GameScreenState extends State<GameScreen>
     if (_engine.gameOver != _lastGameOver) {
       _lastGameOver = _engine.gameOver;
       if (mounted) setState(() {});
+      // Death transition: post results to Supabase exactly once per match.
+      if (_engine.gameOver) {
+        _submitMatchResult();
+      }
+    }
+  }
+
+  bool _submittedThisMatch = false;
+  Future<void> _submitMatchResult() async {
+    if (_submittedThisMatch) return;
+    if (!AuthService.instance.isLoggedIn) return;
+    _submittedThisMatch = true;
+    final human = _engine.humanPlayer;
+    final score = human.highestMass.round();
+    final massCollected = human.highestMass.round();
+    final kills = human.eatenCount;
+    final survival = _engine.timeSurvived.round();
+    final rank = _engine.humanRank > 0 ? _engine.humanRank : 9999;
+    final res = await ProfileService.instance.submitMatchResult(
+      score: score,
+      massCollected: massCollected,
+      kills: kills,
+      survivalSeconds: survival,
+      rank: rank,
+    );
+    if (res != null) {
+      // Apply fresh totals locally so the next render of the main menu / HUD
+      // reflects the new level/coins/XP without another network round-trip.
+      final existing = AuthService.instance.profile;
+      if (existing != null) {
+        AuthService.instance.applyProfile(existing.copyWith(
+          level: res.level,
+          xp: res.xp,
+          coins: res.coins,
+          dna: res.dna,
+        ));
+      } else {
+        await AuthService.instance.refreshProfile();
+      }
     }
   }
 
@@ -139,6 +186,7 @@ class _GameScreenState extends State<GameScreen>
   void _playAgain() {
     _engine.respawnHuman();
     _lastGameOver = false;
+    _submittedThisMatch = false;
     setState(() {});
   }
 
@@ -204,6 +252,30 @@ class _GameScreenState extends State<GameScreen>
                   ),
                 ),
               ],
+            ),
+          ),
+
+          // Active-boost badges, just to the right of the mass HUD.
+          Positioned(
+            top: 14,
+            left: 200,
+            child: IgnorePointer(
+              child: AnimatedBuilder(
+                animation: AuthService.instance,
+                builder: (context, _) {
+                  final boosts = AuthService.instance.activeBoosts;
+                  if (boosts.isEmpty) return const SizedBox.shrink();
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final b in boosts) ...[
+                        _GameBoostBadge(boost: b),
+                        const SizedBox(width: 6),
+                      ],
+                    ],
+                  );
+                },
+              ),
             ),
           ),
 
@@ -381,6 +453,94 @@ class _GameScreenState extends State<GameScreen>
         child: const Icon(Icons.pause, color: Color(0xFF2A2A2A), size: 22),
       ),
     );
+  }
+}
+
+/// Small floating chip placed alongside the mass HUD. Shows the active
+/// boost's multiplier + remaining time. Ticks every second so the countdown
+/// stays live without rebuilding the whole game tree.
+class _GameBoostBadge extends StatefulWidget {
+  const _GameBoostBadge({required this.boost});
+  final PlayerBoost boost;
+
+  @override
+  State<_GameBoostBadge> createState() => _GameBoostBadgeState();
+}
+
+class _GameBoostBadgeState extends State<_GameBoostBadge> {
+  Timer? _t;
+
+  @override
+  void initState() {
+    super.initState();
+    _t = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _t?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final b = widget.boost;
+    final color = b.isMass
+        ? const Color(0xFFFF6A00)
+        : const Color(0xFF00C8E0);
+    final icon = b.isMass ? Icons.fitness_center : Icons.bolt;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.7), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.35),
+            blurRadius: 10,
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 13),
+          const SizedBox(width: 4),
+          Text(
+            '${b.multiplier % 1 == 0 ? b.multiplier.toStringAsFixed(0) : b.multiplier.toStringAsFixed(1)}×',
+            style: GoogleFonts.baloo2(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            _fmt(b.remaining),
+            style: GoogleFonts.baloo2(
+              color: Colors.white70,
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _fmt(Duration d) {
+    final secs = d.inSeconds.clamp(0, 1 << 30);
+    if (secs >= 3600) {
+      final h = d.inHours;
+      final m = d.inMinutes.remainder(60);
+      return '${h}h${m.toString().padLeft(2, '0')}';
+    }
+    final m = d.inMinutes;
+    final s = d.inSeconds.remainder(60);
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 }
 

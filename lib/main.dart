@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'game/skin_registry.dart';
 import 'screens/main_menu_screen.dart';
+import 'services/auth_service.dart';
+import 'services/supabase_config.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,6 +16,17 @@ Future<void> main() async {
   ]);
 
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+
+  // Initialize Supabase BEFORE first frame so AuthService can hook into the
+  // session immediately.
+  await Supabase.initialize(
+    url: SupabaseConfig.url,
+    anonKey: SupabaseConfig.anonKey,
+  );
+
+  // Hydrate the auth singleton from the persisted session (if any) and start
+  // listening for state changes.
+  AuthService.instance.bootstrap();
 
   // Fire-and-forget: start decoding all skin assets so bots have skins ready
   // by the time the player enters a game.
