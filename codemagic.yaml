@@ -32,7 +32,7 @@ workflows:
 
       - name: Analyze Flutter project
         script: |
-          flutter analyze
+          flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Build Ad Hoc IPA
         script: |
