@@ -1,4 +1,4 @@
-workflows:
+﻿workflows:
   ios-adhoc:
     name: "YAZAR.IO iOS Ad Hoc IPA"
     max_build_duration: 120
@@ -24,42 +24,43 @@ workflows:
           flutter pub get
           flutter precache --ios
 
-      - name: Force Flutter iOS Generated.xcconfig
+      - name: Generate Flutter iOS config
         script: |
-          FLUTTER_ROOT_PATH="$(cd "$(dirname "$(command -v flutter)")/.." && pwd)"
+          FLUTTER_BIN="$(command -v flutter)"
+          FLUTTER_ROOT_PATH="$(cd "$(dirname "$FLUTTER_BIN")/.." && pwd)"
           APP_PATH="${CM_BUILD_DIR:-$PWD}"
           BUILD_NUMBER="${PROJECT_BUILD_NUMBER:-1}"
 
           mkdir -p ios/Flutter
 
-          cat > ios/Flutter/Generated.xcconfig <<EOF
-FLUTTER_ROOT=$FLUTTER_ROOT_PATH
-FLUTTER_APPLICATION_PATH=$APP_PATH
-COCOAPODS_PARALLEL_CODE_SIGN=true
-FLUTTER_TARGET=lib/main.dart
-FLUTTER_BUILD_DIR=build
-FLUTTER_BUILD_NAME=1.0.0
-FLUTTER_BUILD_NUMBER=$BUILD_NUMBER
-DART_OBFUSCATION=false
-TRACK_WIDGET_CREATION=false
-TREE_SHAKE_ICONS=true
-PACKAGE_CONFIG=.dart_tool/package_config.json
-EOF
+          {
+            printf '%s\n' "FLUTTER_ROOT=$FLUTTER_ROOT_PATH"
+            printf '%s\n' "FLUTTER_APPLICATION_PATH=$APP_PATH"
+            printf '%s\n' "COCOAPODS_PARALLEL_CODE_SIGN=true"
+            printf '%s\n' "FLUTTER_TARGET=lib/main.dart"
+            printf '%s\n' "FLUTTER_BUILD_DIR=build"
+            printf '%s\n' "FLUTTER_BUILD_NAME=1.0.0"
+            printf '%s\n' "FLUTTER_BUILD_NUMBER=$BUILD_NUMBER"
+            printf '%s\n' "DART_OBFUSCATION=false"
+            printf '%s\n' "TRACK_WIDGET_CREATION=false"
+            printf '%s\n' "TREE_SHAKE_ICONS=true"
+            printf '%s\n' "PACKAGE_CONFIG=.dart_tool/package_config.json"
+          } > ios/Flutter/Generated.xcconfig
 
-          cat > ios/Flutter/flutter_export_environment.sh <<EOF
-#!/bin/sh
-export FLUTTER_ROOT="$FLUTTER_ROOT_PATH"
-export FLUTTER_APPLICATION_PATH="$APP_PATH"
-export COCOAPODS_PARALLEL_CODE_SIGN=true
-export FLUTTER_TARGET="lib/main.dart"
-export FLUTTER_BUILD_DIR="build"
-export FLUTTER_BUILD_NAME="1.0.0"
-export FLUTTER_BUILD_NUMBER="$BUILD_NUMBER"
-export DART_OBFUSCATION=false
-export TRACK_WIDGET_CREATION=false
-export TREE_SHAKE_ICONS=true
-export PACKAGE_CONFIG=".dart_tool/package_config.json"
-EOF
+          {
+            printf '%s\n' '#!/bin/sh'
+            printf '%s\n' "export FLUTTER_ROOT=\"$FLUTTER_ROOT_PATH\""
+            printf '%s\n' "export FLUTTER_APPLICATION_PATH=\"$APP_PATH\""
+            printf '%s\n' "export COCOAPODS_PARALLEL_CODE_SIGN=true"
+            printf '%s\n' "export FLUTTER_TARGET=\"lib/main.dart\""
+            printf '%s\n' "export FLUTTER_BUILD_DIR=\"build\""
+            printf '%s\n' "export FLUTTER_BUILD_NAME=\"1.0.0\""
+            printf '%s\n' "export FLUTTER_BUILD_NUMBER=\"$BUILD_NUMBER\""
+            printf '%s\n' "export DART_OBFUSCATION=false"
+            printf '%s\n' "export TRACK_WIDGET_CREATION=false"
+            printf '%s\n' "export TREE_SHAKE_ICONS=true"
+            printf '%s\n' "export PACKAGE_CONFIG=\".dart_tool/package_config.json\""
+          } > ios/Flutter/flutter_export_environment.sh
 
           chmod +x ios/Flutter/flutter_export_environment.sh
 
@@ -83,25 +84,20 @@ EOF
 
       - name: Build Ad Hoc IPA
         script: |
-          FLUTTER_ROOT_PATH="$(cd "$(dirname "$(command -v flutter)")/.." && pwd)"
+          FLUTTER_BIN="$(command -v flutter)"
+          FLUTTER_ROOT_PATH="$(cd "$(dirname "$FLUTTER_BIN")/.." && pwd)"
           APP_PATH="${CM_BUILD_DIR:-$PWD}"
           BUILD_NUMBER="${PROJECT_BUILD_NUMBER:-1}"
 
           mkdir -p ios/Flutter
 
-          cat > ios/Flutter/Generated.xcconfig <<EOF
-FLUTTER_ROOT=$FLUTTER_ROOT_PATH
-FLUTTER_APPLICATION_PATH=$APP_PATH
-COCOAPODS_PARALLEL_CODE_SIGN=true
-FLUTTER_TARGET=lib/main.dart
-FLUTTER_BUILD_DIR=build
-FLUTTER_BUILD_NAME=1.0.0
-FLUTTER_BUILD_NUMBER=$BUILD_NUMBER
-DART_OBFUSCATION=false
-TRACK_WIDGET_CREATION=false
-TREE_SHAKE_ICONS=true
-PACKAGE_CONFIG=.dart_tool/package_config.json
-EOF
+          if ! grep -q "^FLUTTER_ROOT=" ios/Flutter/Generated.xcconfig; then
+            printf '%s\n' "FLUTTER_ROOT=$FLUTTER_ROOT_PATH" >> ios/Flutter/Generated.xcconfig
+          fi
+
+          if ! grep -q "^FLUTTER_APPLICATION_PATH=" ios/Flutter/Generated.xcconfig; then
+            printf '%s\n' "FLUTTER_APPLICATION_PATH=$APP_PATH" >> ios/Flutter/Generated.xcconfig
+          fi
 
           flutter build ipa --release --no-pub \
             --build-name=1.0.0 \
