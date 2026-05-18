@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
+import '../core/config/server_config.dart';
 import '../game/game_engine.dart' show GameConstants;
 import '../game/skin_registry.dart';
 import '../game/skin_settings.dart';
@@ -23,7 +24,7 @@ import 'online_entities.dart';
 class OnlineClassicController {
   OnlineClassicController({required this.playerName, String? serverUrl})
       : socket = OnlineSocketService(
-          url: serverUrl ?? 'ws://89.167.123.101:2567',
+          url: serverUrl ?? ServerConfig.gameServerUrl,
         );
 
   final String playerName;

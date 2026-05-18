@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as ws_status;
 
+import '../core/config/server_config.dart';
 import '../online/online_entities.dart';
 
 /// Thin transport layer for the online classic server.
@@ -14,7 +15,7 @@ import '../online/online_entities.dart';
 /// up to a cap; if max attempts is reached the state goes to `failed` and the
 /// UI shows a retry button.
 class OnlineSocketService {
-  OnlineSocketService({this.url = 'ws://89.167.123.101:2567'});
+  OnlineSocketService({this.url = ServerConfig.gameServerUrl});
 
   final String url;
 
