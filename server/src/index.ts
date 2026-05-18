@@ -439,10 +439,10 @@ function tryEatPellets(p: Player): void {
       const dx = pe.x - c.x, dy = pe.y - c.y;
       if (dx * dx + dy * dy < r2) {
         if (c.mass < MAX_MASS) c.mass += pe.mass;
-        // Respawn pellet elsewhere instead of removing — keeps array stable.
-        pe.x = rand(20, MAP_W - 20);
-        pe.y = rand(20, MAP_H - 20);
-        pe.color = pickColor();
+        // Replace with a brand-new pellet (new ID) so the client's local
+        // prediction can safely remove the eaten ID without seeing the
+        // "teleporting pellet" flicker.
+        pellets[i] = spawnPellet();
       }
     }
   }
