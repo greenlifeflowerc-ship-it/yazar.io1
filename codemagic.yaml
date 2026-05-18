@@ -1,4 +1,4 @@
-﻿workflows:
+workflows:
   ios-adhoc:
     name: YAZAR.IO iOS Ad Hoc IPA
     max_build_duration: 120
@@ -13,7 +13,7 @@
       cocoapods: default
       ios_signing:
         provisioning_profiles:
-          - YAZAR_IO_ADHOC_PROFILE
+          - codemagic.yaml
         certificates:
           - YAZAR_IO_DIST_CERT
 
