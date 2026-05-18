@@ -112,21 +112,23 @@ class _LevelUpPopupState extends State<LevelUpPopup>
                     borderRadius: BorderRadius.circular(22),
                   ),
                   padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _header(),
-                      const SizedBox(height: 14),
-                      _rewards(),
-                      if (hasSkins) ...[
-                        const SizedBox(height: 16),
-                        _unlockedHeader(),
-                        const SizedBox(height: 10),
-                        _skinsCarousel(),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _header(),
+                        const SizedBox(height: 14),
+                        _rewards(),
+                        if (hasSkins) ...[
+                          const SizedBox(height: 16),
+                          _unlockedHeader(),
+                          const SizedBox(height: 10),
+                          _skinsCarousel(),
+                        ],
+                        const SizedBox(height: 18),
+                        _continueButton(),
                       ],
-                      const SizedBox(height: 18),
-                      _continueButton(),
-                    ],
+                    ),
                   ),
                 ),
               ),

@@ -17,6 +17,7 @@ import '../widgets/login_popup.dart';
 import '../widgets/menu_icon_button.dart';
 import '../widgets/shop_button.dart';
 import '../widgets/game_modes_dropdown.dart';
+import 'capsule_screen.dart';
 import 'game_screen.dart';
 import 'online_classic_screen.dart';
 import 'profile_screen.dart';
@@ -46,8 +47,6 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   void initState() {
     super.initState();
     AuthService.instance.addListener(_onAuthChanged);
-    // Refresh boost state (auto-expires stale rows on the server) every time
-    // we land on the main menu.
     AuthService.instance.refreshActiveBoosts();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _maybeShowLoginPopup();
@@ -253,7 +252,13 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
             color: AppColors.cyanButton,
             shadowColor: AppColors.cyanButtonShadow,
             badge: '!',
-            onTap: () => debugPrint('Potion pressed'),
+            onTap: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CapsuleScreen()),
+              );
+              if (mounted) setState(() {});
+            },
           ),
         ],
       ),

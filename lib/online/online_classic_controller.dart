@@ -116,8 +116,10 @@ class OnlineClassicController {
       playerName: playerName.trim().isEmpty ? 'Player' : playerName,
       skin: SkinSettings.instance.skinPath ?? '',
     );
-    // Input pump: 30 Hz. Skips sends when nothing changed.
-    _inputTimer = Timer.periodic(const Duration(milliseconds: 33), (_) {
+    // Input pump: 50 Hz (20 ms) — matches server tick rate so movement
+    // updates arrive in the same frame as the next simulation step.
+    // Skips sends when the input vector hasn't changed enough to matter.
+    _inputTimer = Timer.periodic(const Duration(milliseconds: 20), (_) {
       if (_disposed) return;
       final v = _clampInput(inputDir);
       if ((v - _lastSentInput).distance < 0.01) return;
@@ -187,12 +189,11 @@ class OnlineClassicController {
   /// Drive interpolation + local prediction. Call from a Ticker each frame
   /// with the delta time.
   void tickInterpolation(double dt) {
-    // 1. Exponential blend toward server-confirmed targets for every cell
-    //    (remote players, bots, AND the self cell — for the self cell we
-    //    override its render position below). Rate 25 ≈ 80 ms time
-    //    constant — tight enough that remote players track the joystick
-    //    they're driving, loose enough to absorb 30 Hz snapshot jitter.
-    final t = 1 - exp(-25 * dt);
+    // 1. Exponential blend toward server-confirmed targets. With 50 Hz
+    //    snapshots arriving every 20 ms, rate 40 gives a ~25 ms time
+    //    constant — tight enough for real-time tracking, loose enough to
+    //    smooth packet jitter.
+    final t = 1 - exp(-40 * dt);
     for (final c in cells.values) {
       c.interpolate(t);
     }
@@ -224,7 +225,8 @@ class OnlineClassicController {
       final ex = selfX - serverSelfX;
       final ey = selfY - serverSelfY;
       final err = ex * ex + ey * ey;
-      const double deadzone = 50.0;
+      // Tighter deadzone now that snapshots are 20 ms apart instead of 33 ms.
+      const double deadzone = 35.0;
       const double snap = 200.0;
       if (err > snap * snap) {
         selfX = serverSelfX;
@@ -435,37 +437,42 @@ class OnlineClassicController {
     // ~40 ms).
     cells.removeWhere((id, c) => nowMs - c.lastSnapshotMs > 600);
 
-    // ── pellets
-    final pelletsJson = (msg['pellets'] as List?) ?? const [];
-    for (final raw in pelletsJson) {
-      final j = raw as Map<String, dynamic>;
-      final id = j['id'] as String;
-      final existing = pellets[id];
-      if (existing == null) {
-        final e = OnlinePellet.fromJson(j);
-        e.lastSnapshotMs = nowMs;
-        pellets[id] = e;
-      } else {
-        existing.updateFromJson(j, nowMs);
+    // ── pellets / viruses arrive at HALF the cell rate (25 Hz, every other
+    // tick). Only refresh + prune when the snapshot actually includes them,
+    // otherwise the client would briefly empty out twice a second.
+    final pelletsRaw = msg['pellets'];
+    if (pelletsRaw is List) {
+      for (final raw in pelletsRaw) {
+        final j = raw as Map<String, dynamic>;
+        final id = j['id'] as String;
+        final existing = pellets[id];
+        if (existing == null) {
+          final e = OnlinePellet.fromJson(j);
+          e.lastSnapshotMs = nowMs;
+          pellets[id] = e;
+        } else {
+          existing.updateFromJson(j, nowMs);
+        }
       }
+      pellets.removeWhere((id, p) => nowMs - p.lastSnapshotMs > 2000);
     }
-    pellets.removeWhere((id, p) => nowMs - p.lastSnapshotMs > 2000);
 
-    // ── viruses
-    final virusesJson = (msg['viruses'] as List?) ?? const [];
-    for (final raw in virusesJson) {
-      final j = raw as Map<String, dynamic>;
-      final id = j['id'] as String;
-      final existing = viruses[id];
-      if (existing == null) {
-        final e = OnlineVirus.fromJson(j);
-        e.lastSnapshotMs = nowMs;
-        viruses[id] = e;
-      } else {
-        existing.updateFromJson(j, nowMs);
+    final virusesRaw = msg['viruses'];
+    if (virusesRaw is List) {
+      for (final raw in virusesRaw) {
+        final j = raw as Map<String, dynamic>;
+        final id = j['id'] as String;
+        final existing = viruses[id];
+        if (existing == null) {
+          final e = OnlineVirus.fromJson(j);
+          e.lastSnapshotMs = nowMs;
+          viruses[id] = e;
+        } else {
+          existing.updateFromJson(j, nowMs);
+        }
       }
+      viruses.removeWhere((id, v) => nowMs - v.lastSnapshotMs > 3000);
     }
-    viruses.removeWhere((id, v) => nowMs - v.lastSnapshotMs > 3000);
 
     // ── ejected (feed)
     final ejectedJson = (msg['ejected'] as List?) ?? const [];

@@ -4,9 +4,11 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 
 import '../game/skin_settings.dart';
+import '../models/mystery_skin.dart';
 import '../models/skin.dart';
 import '../services/auth_service.dart';
 import '../services/profile_service.dart';
+import '../services/storage_service.dart';
 import '../utils/app_colors.dart';
 import '../widgets/background_painter.dart';
 
@@ -28,8 +30,11 @@ class _SkinChooserScreenState extends State<SkinChooserScreen> {
     _SkinTab('Free',    'free'),
     _SkinTab('Level',   'level'),
     _SkinTab('Premium', 'premium'),
-    _SkinTab('—',       null),
+    _SkinTab('Mystery', 'mystery'),
   ];
+
+  // Mystery tab index constant for clarity
+  static const int _mysteryTabIndex = 3;
 
   static final _fmt = NumberFormat.decimalPattern('en_US');
 
@@ -40,17 +45,27 @@ class _SkinChooserScreenState extends State<SkinChooserScreen> {
   int _selectedIndex = 0;
   String? _busyKey;
   late final PageController _pageController;
+  late final PageController _mysteryPageController;
+  int _mysterySelectedIndex = 0;
 
   @override
   void initState() {
     super.initState();
     _pageController = PageController(viewportFraction: 0.28);
+    _mysteryPageController = PageController(viewportFraction: 0.28);
     _load();
+    // Load mystery skins
+    final registry = MysterySkinRegistry.instance;
+    if (!registry.isLoaded) {
+      final raw = StorageService.instance.getString('mysterySkins') ?? '';
+      registry.load(raw.isEmpty ? null : raw);
+    }
   }
 
   @override
   void dispose() {
     _pageController.dispose();
+    _mysteryPageController.dispose();
     super.dispose();
   }
 
@@ -212,13 +227,14 @@ class _SkinChooserScreenState extends State<SkinChooserScreen> {
   }
 
   void _selectTab(int i) {
-    if (_tabs[i].category == null) return;
     if (i == _tabIndex) return;
     setState(() {
       _tabIndex = i;
       _selectedIndex = 0;
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToSelected());
+    if (i != _mysteryTabIndex) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToSelected());
+    }
   }
 
   Skin? get _selected {
@@ -385,24 +401,20 @@ class _SkinChooserScreenState extends State<SkinChooserScreen> {
   Widget _tabButton(int i) {
     final t = _tabs[i];
     final selected = i == _tabIndex;
-    final enabled = t.category != null;
-    final color = !enabled
-        ? const Color(0xFFE0E0E0)
-        : selected
-            ? AppColors.classicOrange
-            : Colors.white;
-    final shadow = !enabled
-        ? const Color(0xFFB8B8B8)
-        : selected
-            ? AppColors.classicOrangeShadow
-            : const Color(0xFFCCCCCC);
+    final isMystery = i == _mysteryTabIndex;
+    final color = selected
+        ? (isMystery ? const Color(0xFF00C8E0) : AppColors.classicOrange)
+        : Colors.white;
+    final shadow = selected
+        ? (isMystery ? const Color(0xFF008A9C) : AppColors.classicOrangeShadow)
+        : const Color(0xFFCCCCCC);
     final textColor = selected ? Colors.white : AppColors.textDark;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: enabled ? () => _selectTab(i) : null,
+        onTap: () => _selectTab(i),
         child: SizedBox(
           height: 44,
           child: Stack(
@@ -428,16 +440,13 @@ class _SkinChooserScreenState extends State<SkinChooserScreen> {
                   decoration: BoxDecoration(
                     color: color,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: enabled ? shadow : const Color(0xFFB8B8B8),
-                      width: 1.5,
-                    ),
+                    border: Border.all(color: shadow, width: 1.5),
                   ),
                   child: Center(
                     child: Text(
                       t.label.toUpperCase(),
                       style: GoogleFonts.baloo2(
-                        color: enabled ? textColor : Colors.white70,
+                        color: textColor,
                         fontSize: 13,
                         fontWeight: FontWeight.w900,
                         letterSpacing: 1.2,
@@ -454,6 +463,7 @@ class _SkinChooserScreenState extends State<SkinChooserScreen> {
   }
 
   Widget _carousel() {
+    if (_tabIndex == _mysteryTabIndex) return _mysteryTabView();
     if (_loading) return const Center(child: CircularProgressIndicator());
     final list = _currentTabSkins;
     if (list.isEmpty) {
@@ -486,6 +496,167 @@ class _SkinChooserScreenState extends State<SkinChooserScreen> {
       onPageChanged: (i) => setState(() => _selectedIndex = i),
       itemBuilder: (context, i) => _skinTile(list, i),
     );
+  }
+
+  Widget _mysteryTabView() {
+    final skins = MysterySkinRegistry.instance.skins;
+    return PageView.builder(
+      controller: _mysteryPageController,
+      itemCount: skins.length,
+      onPageChanged: (i) => setState(() => _mysterySelectedIndex = i),
+      itemBuilder: (context, i) {
+        final ms = skins[i];
+        final selected = i == _mysterySelectedIndex;
+        final locked = !ms.isUnlocked;
+        final isEquipped =
+            !locked && SkinSettings.instance.skinPath == ms.baseImagePath;
+
+        return Center(
+          child: AnimatedScale(
+            scale: selected ? 1.0 : 0.78,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            child: AnimatedOpacity(
+              opacity: selected ? 1.0 : 0.55,
+              duration: const Duration(milliseconds: 220),
+              child: AspectRatio(
+                aspectRatio: 1,
+                child: Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white,
+                    border: Border.all(
+                      color: locked
+                          ? AppColors.cardBorder
+                          : isEquipped
+                              ? const Color(0xFF00C8E0)
+                              : selected
+                                  ? const Color(0xFF00C8E0)
+                                  : AppColors.cardBorder,
+                      width: selected ? 4 : 2,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: locked
+                            ? Colors.black.withValues(alpha: 0.06)
+                            : selected
+                                ? const Color(0xFF00C8E0)
+                                    .withValues(alpha: 0.35)
+                                : Colors.black.withValues(alpha: 0.08),
+                        blurRadius: selected ? 24 : 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(6),
+                    child: ClipOval(
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          // Skin image (always visible, greyed if locked)
+                          ColorFiltered(
+                            colorFilter: locked
+                                ? const ColorFilter.matrix([
+                                    0.2126, 0.7152, 0.0722, 0, 0,
+                                    0.2126, 0.7152, 0.0722, 0, 0,
+                                    0.2126, 0.7152, 0.0722, 0, 0,
+                                    0,      0,      0,      1, 0,
+                                  ])
+                                : const ColorFilter.mode(
+                                    Colors.transparent,
+                                    BlendMode.multiply),
+                            child: Image.asset(
+                              ms.baseImagePath,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                color: const Color(0xFFEEEEEE),
+                                child: Icon(
+                                  locked ? Icons.lock : Icons.auto_awesome,
+                                  color: const Color(0xFF00C8E0),
+                                  size: 44,
+                                ),
+                              ),
+                            ),
+                          ),
+                          // Lock overlay
+                          if (locked)
+                            Container(
+                              color: Colors.black.withValues(alpha: 0.35),
+                              child: Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.lock,
+                                        color: Colors.white70, size: 30),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      '${ms.piecesOwned}/5',
+                                      style: GoogleFonts.baloo2(
+                                        color: Colors.white70,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          // Equipped checkmark
+                          if (isEquipped)
+                            Positioned(
+                              right: 6,
+                              bottom: 6,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFF00C8E0),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.check,
+                                    color: Colors.white, size: 14),
+                              ),
+                            ),
+                          // Evolution level badge
+                          if (!locked &&
+                              ms.evolutionLevel != SkinEvolutionLevel.l0)
+                            Positioned(
+                              left: 4,
+                              top: 4,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 5, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF00C8E0),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  ms.evolutionLevel.displayName,
+                                  style: GoogleFonts.baloo2(
+                                    color: Colors.white,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  MysterySkin? get _selectedMystery {
+    final skins = MysterySkinRegistry.instance.skins;
+    if (skins.isEmpty) return null;
+    return skins[_mysterySelectedIndex.clamp(0, skins.length - 1)];
   }
 
   Widget _skinTile(List<Skin> list, int i) {
@@ -594,6 +765,8 @@ class _SkinChooserScreenState extends State<SkinChooserScreen> {
   }
 
   Widget _bottomBar() {
+    if (_tabIndex == _mysteryTabIndex) return _mysteryBottomBar();
+
     final selected = _selected;
     final hasAny = _currentTabSkins.isNotEmpty;
     return Padding(
@@ -624,6 +797,163 @@ class _SkinChooserScreenState extends State<SkinChooserScreen> {
                 onTap: hasAny &&
                         _selectedIndex < _currentTabSkins.length - 1
                     ? () => _pageController.nextPage(
+                          duration: const Duration(milliseconds: 240),
+                          curve: Curves.easeOutCubic,
+                        )
+                    : null,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _mysteryBottomBar() {
+    final ms = _selectedMystery;
+    final skins = MysterySkinRegistry.instance.skins;
+    final hasAny = skins.isNotEmpty;
+    if (ms == null) return const SizedBox.shrink();
+
+    final locked = !ms.isUnlocked;
+    final isEquipped =
+        !locked && SkinSettings.instance.skinPath == ms.baseImagePath;
+    final nextPieces = ms.piecesForNext;
+    final registry = MysterySkinRegistry.instance;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 4),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Name + badge row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                ms.name,
+                style: GoogleFonts.baloo2(
+                  color: AppColors.textDark,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: locked
+                      ? Colors.grey.withValues(alpha: 0.15)
+                      : const Color(0xFF00C8E0).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                      color: locked
+                          ? Colors.grey.withValues(alpha: 0.4)
+                          : const Color(0xFF00C8E0).withValues(alpha: 0.5)),
+                ),
+                child: Text(
+                  locked ? 'LOCKED' : ms.evolutionLevel.displayName,
+                  style: GoogleFonts.baloo2(
+                    color: locked ? Colors.grey : const Color(0xFF00C8E0),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (nextPieces != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              locked
+                  ? '${ms.piecesOwned}/5 pieces to unlock'
+                  : '${ms.piecesOwned}/$nextPieces pieces',
+              style: GoogleFonts.baloo2(
+                  color: AppColors.textMuted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700),
+            ),
+          ],
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _ArrowButton(
+                icon: Icons.chevron_left,
+                onTap: hasAny && _mysterySelectedIndex > 0
+                    ? () => _mysteryPageController.previousPage(
+                          duration: const Duration(milliseconds: 240),
+                          curve: Curves.easeOutCubic,
+                        )
+                    : null,
+              ),
+              const SizedBox(width: 14),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Locked: show disabled LOCKED button or UNLOCK if ready
+                  if (locked && !ms.canEvolve)
+                    _ApplyButton(
+                      label: 'LOCKED',
+                      enabled: false,
+                      onTap: _noop,
+                    ),
+                  // Locked but can unlock (5 pieces ready)
+                  if (locked && ms.canEvolve)
+                    _ApplyButton(
+                      label: 'UNLOCK',
+                      enabled: true,
+                      onTap: () {
+                        setState(() => ms.evolve());
+                        StorageService.instance.setString(
+                            'mysterySkins', registry.saveToJson());
+                      },
+                    ),
+                  // Unlocked: show EQUIP
+                  if (!locked)
+                    _ApplyButton(
+                      label: isEquipped ? 'EQUIPPED' : 'EQUIP',
+                      enabled: !isEquipped,
+                      onTap: isEquipped
+                          ? _noop
+                          : () async {
+                              await SkinSettings.instance.selectSkin(
+                                ms.baseImagePath,
+                                evolutionLevel: ms.evolutionLevel.index,
+                                altPath: ms.altImagePath,
+                              );
+                              setState(() {});
+                              _snack('${ms.name} equipped!');
+                            },
+                    ),
+                  // Upgrade button
+                  if (!locked && ms.canEvolve) ...[
+                    const SizedBox(height: 4),
+                    _ApplyButton(
+                      label: 'UPGRADE ✦',
+                      enabled: true,
+                      onTap: () {
+                        setState(() => ms.evolve());
+                        StorageService.instance.setString(
+                            'mysterySkins', registry.saveToJson());
+                        if (SkinSettings.instance.skinPath ==
+                            ms.baseImagePath) {
+                          SkinSettings.instance.setEvolutionLevel(
+                            ms.evolutionLevel.index,
+                            altPath: ms.altImagePath,
+                          );
+                        }
+                      },
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(width: 14),
+              _ArrowButton(
+                icon: Icons.chevron_right,
+                onTap: hasAny && _mysterySelectedIndex < skins.length - 1
+                    ? () => _mysteryPageController.nextPage(
                           duration: const Duration(milliseconds: 240),
                           curve: Curves.easeOutCubic,
                         )

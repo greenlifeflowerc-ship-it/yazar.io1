@@ -32,56 +32,61 @@ class DeathScreen extends StatelessWidget {
     return Container(
       color: Colors.black.withValues(alpha: 0.7),
       child: Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.4),
-                blurRadius: 24,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'YOU DIED',
-                style: GoogleFonts.baloo2(
-                  color: const Color(0xFFFF1F2D),
-                  fontSize: 40,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 2,
+        child: SingleChildScrollView(
+          // Lets the card scroll on extremely short landscape screens
+          // instead of overflowing the column.
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.4),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
                 ),
-              ),
-              const SizedBox(height: 14),
-              _statRow('Highest mass', fmt.format(highestMass.round())),
-              _statRow('Time survived', _formatTime(timeSurvived)),
-              _statRow('Cells eaten', '$eatenCount'),
-              _statRow('Best rank', rank > 0 ? '#$rank' : '—'),
-              const SizedBox(height: 18),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _menuButton(
-                    label: 'PLAY AGAIN',
-                    color: const Color(0xFFFF6A00),
-                    shadow: const Color(0xFFB73A00),
-                    onTap: onPlayAgain,
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'YOU DIED',
+                  style: GoogleFonts.baloo2(
+                    color: const Color(0xFFFF1F2D),
+                    fontSize: 36,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 2,
                   ),
-                  const SizedBox(width: 16),
-                  _menuButton(
-                    label: 'MAIN MENU',
-                    color: const Color(0xFF1E9BFF),
-                    shadow: const Color(0xFF0066C8),
-                    onTap: onMainMenu,
-                  ),
-                ],
-              ),
-            ],
+                ),
+                const SizedBox(height: 10),
+                _statRow('Highest mass', fmt.format(highestMass.round())),
+                _statRow('Time survived', _formatTime(timeSurvived)),
+                _statRow('Cells eaten', '$eatenCount'),
+                _statRow('Best rank', rank > 0 ? '#$rank' : '—'),
+                const SizedBox(height: 14),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _menuButton(
+                      label: 'PLAY AGAIN',
+                      color: const Color(0xFFFF6A00),
+                      shadow: const Color(0xFFB73A00),
+                      onTap: onPlayAgain,
+                    ),
+                    const SizedBox(width: 16),
+                    _menuButton(
+                      label: 'MAIN MENU',
+                      color: const Color(0xFF1E9BFF),
+                      shadow: const Color(0xFF0066C8),
+                      onTap: onMainMenu,
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),

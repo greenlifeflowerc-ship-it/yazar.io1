@@ -13,12 +13,13 @@ class Skin {
     required this.owned,
     required this.equipped,
     this.source,
+    this.evolutionLevel = 0,
   });
 
   final String id;
   final String key;
   final String name;
-  final String category; // 'level' | 'premium' | 'free'
+  final String category; // 'level' | 'premium' | 'free' | 'mystery'
   final String imagePath;
   final int unlockLevel;
   final int priceCoins;
@@ -27,9 +28,14 @@ class Skin {
   final bool equipped;
   final String? source;
 
+  /// 0 = base, 1 = L1 shimmer, 2 = L2 glow-on-split, 3 = L3 alt-face-on-split.
+  final int evolutionLevel;
+
   bool get isLevel => category == 'level';
   bool get isPremium => category == 'premium';
   bool get isFree => category == 'free';
+
+  bool get isMystery => category == 'mystery';
 
   factory Skin.fromJson(Map<String, dynamic> json) {
     return Skin(
@@ -44,6 +50,7 @@ class Skin {
       owned: json['owned'] as bool? ?? false,
       equipped: json['equipped'] as bool? ?? false,
       source: json['source'] as String?,
+      evolutionLevel: (json['evolution_level'] as num?)?.toInt() ?? 0,
     );
   }
 }

@@ -11,8 +11,11 @@ import '../game/game_mode_type.dart';
 import '../game/game_settings.dart';
 import '../game/painters/game_painter.dart';
 import '../models/boost.dart';
+import '../models/capsule.dart';
 import '../services/auth_service.dart';
+import '../services/capsule_service.dart';
 import '../services/profile_service.dart';
+import '../services/storage_service.dart';
 import '../widgets/death_screen.dart';
 import '../widgets/game_button.dart';
 import '../widgets/live_leaderboard.dart';
@@ -102,10 +105,12 @@ class _GameScreenState extends State<GameScreen>
   void _onTick(Duration elapsed) {
     final dt = (elapsed - _lastTick).inMicroseconds / 1e6;
 
-    // FPS Capping logic
+    // FPS Capping logic (0 = unlimited / follow vsync)
     final cap = GameSettings.instance.fpsCap;
-    final minDt = 1.0 / cap;
-    if (dt < minDt && _lastTick != Duration.zero) return;
+    if (cap > 0) {
+      final minDt = 1.0 / cap;
+      if (dt < minDt && _lastTick != Duration.zero) return;
+    }
 
     _lastTick = elapsed;
     final clamped = dt.clamp(0.0, 0.05);
@@ -160,6 +165,28 @@ class _GameScreenState extends State<GameScreen>
     final kills = human.eatenCount;
     final survival = _engine.timeSurvived.round();
     final rank = _engine.humanRank > 0 ? _engine.humanRank : 9999;
+
+    // Award a capsule based on match performance (rank + time).
+    // We load any existing inventory first so we don't overwrite progress.
+    final inv = CapsuleInventory.instance;
+    final savedInv = StorageService.instance.getString('capsuleInventory') ?? '';
+    if (savedInv.isNotEmpty) inv.loadFromJson(savedInv);
+    final awardedTier =
+        inv.awardForMatch(rank: rank, survivalSeconds: survival);
+    StorageService.instance.setString('capsuleInventory', inv.saveToJson());
+    // Sync the new capsule to the server so it's persisted across devices.
+    if (awardedTier != null && AuthService.instance.isLoggedIn) {
+      final slotIdx = inv.slots.indexWhere((s) =>
+          !s.isEmpty && s.tier == awardedTier && s.brewStartedAt != null);
+      if (slotIdx >= 0) {
+        await CapsuleService.instance.awardCapsuleOnServer(
+          tier: awardedTier,
+          slotIndex: slotIdx,
+          brewStartedAt: inv.slots[slotIdx].brewStartedAt!,
+        );
+      }
+    }
+
     final res = await ProfileService.instance.submitMatchResult(
       score: score,
       massCollected: massCollected,
@@ -289,6 +316,39 @@ class _GameScreenState extends State<GameScreen>
 
   void _exitToMenu() => Navigator.of(context).pop();
 
+  /// World canvas with optional render-resolution scaling.
+  /// `renderScale` < 1 = lower pixel count (faster, blurrier).
+  /// `renderScale` > 1 = supersampled (sharper, slower).
+  ///
+  /// Uses [FittedBox] (not Transform.scale) so the SizedBox child is laid
+  /// out at its natural size — Positioned.fill above us hands down tight
+  /// constraints that would otherwise stretch the SizedBox back to native.
+  Widget _buildWorldCanvas(Size size) {
+    final scale = GameSettings.instance.renderScale;
+    if (scale == 1.0) {
+      return RepaintBoundary(
+        child: CustomPaint(
+          painter: GamePainter(engine: _engine, repaint: _frame),
+          size: size,
+        ),
+      );
+    }
+    final canvasSize = Size(size.width * scale, size.height * scale);
+    return FittedBox(
+      fit: BoxFit.fill,
+      child: SizedBox(
+        width: canvasSize.width,
+        height: canvasSize.height,
+        child: RepaintBoundary(
+          child: CustomPaint(
+            painter: GamePainter(engine: _engine, repaint: _frame),
+            size: canvasSize,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
@@ -346,14 +406,10 @@ class _GameScreenState extends State<GameScreen>
               },
               child: Stack(
                 children: [
-                  // World canvas (60 Hz)
+                  // World canvas — wrapped in Transform.scale so the painter
+                  // can render to a smaller pixel buffer when renderScale<1.
                   Positioned.fill(
-                    child: RepaintBoundary(
-                      child: CustomPaint(
-                        painter: GamePainter(engine: _engine, repaint: _frame),
-                        size: size,
-                      ),
-                    ),
+                    child: _buildWorldCanvas(size),
                   ),
 
                   // Joystick — side controlled by settings

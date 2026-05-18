@@ -72,8 +72,54 @@ class _OnlineClassicScreenState extends State<OnlineClassicScreen>
     }
   }
 
+  /// World canvas with optional render-resolution scaling (same trick as
+  /// Offline Classic). Lower scale → fewer pixels → faster.
+  ///
+  /// Uses [FittedBox] so the SizedBox child is laid out at its natural
+  /// (scaled) size rather than being forced to fill by the parent's tight
+  /// constraints.
+  Widget _buildWorldCanvas(Size size) {
+    final scale = GameSettings.instance.renderScale;
+    if (scale == 1.0) {
+      return RepaintBoundary(
+        child: CustomPaint(
+          painter: OnlineClassicPainter(
+            controller: _controller,
+            repaint: _controller.frame,
+          ),
+          size: size,
+        ),
+      );
+    }
+    final canvasSize = Size(size.width * scale, size.height * scale);
+    return FittedBox(
+      fit: BoxFit.fill,
+      child: SizedBox(
+        width: canvasSize.width,
+        height: canvasSize.height,
+        child: RepaintBoundary(
+          child: CustomPaint(
+            painter: OnlineClassicPainter(
+              controller: _controller,
+              repaint: _controller.frame,
+            ),
+            size: canvasSize,
+          ),
+        ),
+      ),
+    );
+  }
+
   void _onTick(Duration elapsed) {
     final dt = (elapsed - _last).inMicroseconds / 1e6;
+
+    // FPS cap (0 = unlimited / follow vsync). Same logic as offline classic.
+    final cap = GameSettings.instance.fpsCap;
+    if (cap > 0) {
+      final minDt = 1.0 / cap;
+      if (dt < minDt && _last != Duration.zero) return;
+    }
+
     _last = elapsed;
     final clamped = dt.clamp(0.0, 0.05);
 
@@ -240,15 +286,7 @@ class _OnlineClassicScreenState extends State<OnlineClassicScreen>
             children: [
               // 1. World renderer (bottom).
               Positioned.fill(
-                child: RepaintBoundary(
-                  child: CustomPaint(
-                    painter: OnlineClassicPainter(
-                      controller: _controller,
-                      repaint: _controller.frame,
-                    ),
-                    size: size,
-                  ),
-                ),
+                child: _buildWorldCanvas(size),
               ),
 
               // 2. Joystick — touch-only. PC mode replaces it with the

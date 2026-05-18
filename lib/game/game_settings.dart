@@ -180,6 +180,7 @@ class GameSettings extends ChangeNotifier {
     _darkMode = storage.getBool('darkMode') ?? false;
     _graphicsQuality = storage.getInt('graphicsQuality') ?? 2;
     _fpsCap = storage.getInt('fpsCap') ?? 60;
+    _renderScale = storage.getDouble('renderScale') ?? 1.0;
 
     final ejDx = storage.getOffsetDx('ejectBtn');
     final ejDy = storage.getOffsetDy('ejectBtn');
@@ -260,13 +261,27 @@ class GameSettings extends ChangeNotifier {
     notifyListeners();
   }
 
-  // FPS Cap
+  // FPS Cap (0 = unlimited / use device refresh rate)
   int _fpsCap = 60;
   int get fpsCap => _fpsCap;
   set fpsCap(int v) {
     if (_fpsCap == v) return;
     _fpsCap = v;
     StorageService.instance.setInt('fpsCap', v);
+    notifyListeners();
+  }
+
+  /// Render-resolution multiplier for the game world canvas.
+  /// 0.6 = render at 60% pixels (much faster, blurrier).
+  /// 1.0 = native (default).
+  /// 1.25 = supersampled (sharper, slower).
+  double _renderScale = 1.0;
+  double get renderScale => _renderScale;
+  set renderScale(double v) {
+    final c = v.clamp(0.5, 1.5);
+    if ((_renderScale - c).abs() < 0.001) return;
+    _renderScale = c;
+    StorageService.instance.setDouble('renderScale', c);
     notifyListeners();
   }
 
@@ -303,6 +318,7 @@ class GameSettings extends ChangeNotifier {
     _darkMode = false;
     _graphicsQuality = 2;
     _fpsCap = 60;
+    _renderScale = 1.0;
     
     // Clear storage or just let setters handle it. Better to clear or overwrite.
     final storage = StorageService.instance;
@@ -323,6 +339,7 @@ class GameSettings extends ChangeNotifier {
     storage.setBool('darkMode', false);
     storage.setInt('graphicsQuality', 2);
     storage.setInt('fpsCap', 60);
+    storage.setDouble('renderScale', 1.0);
     storage.setOffset('ejectBtn', 0.80, 0.85);
     storage.setOffset('ejectBtn2', 0.70, 0.85);
     storage.setOffset('splitBtn', 0.91, 0.80);

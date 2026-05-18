@@ -394,8 +394,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _segmentedRow<int>(
             'FPS Cap',
             _s.fpsCap,
-            {60: '60', 90: '90', 120: '120'},
+            {60: '60', 90: '90', 120: '120', 144: '144', 0: '∞'},
             (v) => _s.fpsCap = v!,
+          ),
+          const SizedBox(height: 8),
+          _segmentedRow<int>(
+            'Resolution',
+            (_s.renderScale * 100).round(),
+            {60: '60%', 80: '80%', 100: '100%', 125: '125%'},
+            (v) => _s.renderScale = (v ?? 100) / 100.0,
           ),
         ],
       ),

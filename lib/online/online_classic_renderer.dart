@@ -27,6 +27,7 @@ class OnlineClassicPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (size.width <= 0 || size.height <= 0) return; // no usable surface yet
     final settings = GameSettings.instance;
+    final renderScale = settings.renderScale;
     canvas.drawRect(
       Offset.zero & size,
       Paint()..color = settings.backgroundColor,
@@ -40,7 +41,9 @@ class OnlineClassicPainter extends CustomPainter {
     final cy = controller.predictedY.isFinite
         ? controller.predictedY
         : controller.mapHeight / 2;
-    final zoom = _zoomForMass(controller.selfMass.toDouble());
+    // Multiply by renderScale so a downscaled canvas still shows the same
+    // world area (matches GamePainter logic exactly).
+    final zoom = _zoomForMass(controller.selfMass.toDouble()) * renderScale;
     canvas.save();
     canvas.translate(size.width / 2, size.height / 2);
     canvas.scale(zoom);

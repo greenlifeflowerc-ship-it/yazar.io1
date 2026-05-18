@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../entities/cell.dart';
 import '../entities/virus.dart';
 import '../game_engine.dart';
+import '../skin_settings.dart';
 
 class SplitHandler {
   SplitHandler(this.engine, this.rng);
@@ -27,19 +28,13 @@ class SplitHandler {
     }
   }
 
-  /// Force-split any cell whose mass exceeds 22,500. Direction is RANDOM
-  /// per the spec, NOT joystick direction. If 16 cells are already out,
-  /// hard-cap the mass at 22,500.
+  /// Hard-cap any cell at maxCellMass. No auto-split.
   void enforceAutoSplit(Player p) {
     if (p.isDead) return;
-    for (final c in List<Cell>.from(p.cells)) {
-      if (c.mass <= GameConstants.maxCellMass) continue;
-      if (p.cells.length >= GameConstants.maxCellsPerPlayer) {
+    for (final c in p.cells) {
+      if (c.mass > GameConstants.maxCellMass) {
         c.mass = GameConstants.maxCellMass;
-        continue;
       }
-      final ang = rng.nextDouble() * pi * 2;
-      _doSplit(p, c, Offset(cos(ang), sin(ang)));
     }
   }
 
@@ -118,8 +113,12 @@ class SplitHandler {
     final now = DateTime.now();
     source.mass = newMass;
     _setSplitCooldown(source, now);
-    
     _spawnSplitCell(p, source, newMass, dir, now: now);
+
+    // Notify SkinSettings so L2/L3 split effects can fire.
+    if (identical(p, engine.humanPlayer)) {
+      SkinSettings.instance.onPlayerSplit();
+    }
   }
 
   void _spawnSplitCell(
@@ -130,7 +129,11 @@ class SplitHandler {
     required DateTime now,
   }) {
     final radius = sqrt(mass / pi) * 10;
-    final cooldown = GameConstants.mergeCooldownForRadius(radius);
+    final mult = engine.modeConfig.splitCooldownMultiplier.clamp(0.1, 5.0);
+    final baseCooldown = GameConstants.mergeCooldownForRadius(radius);
+    final cooldown = Duration(
+      milliseconds: (baseCooldown.inMilliseconds * mult).round(),
+    );
     
     // Scale split impulse by radius so larger cells split further, 
     // mimicking Agar.io mobile's feel.
@@ -153,7 +156,11 @@ class SplitHandler {
   }
 
   void _setSplitCooldown(Cell c, DateTime now) {
-    c.mergeReadyAt = now.add(GameConstants.mergeCooldownForRadius(c.radius));
+    final base = GameConstants.mergeCooldownForRadius(c.radius);
+    final mult = engine.modeConfig.splitCooldownMultiplier.clamp(0.1, 5.0);
+    c.mergeReadyAt = now.add(Duration(
+      milliseconds: (base.inMilliseconds * mult).round(),
+    ));
     c.isFreshSplit = true;
   }
 }

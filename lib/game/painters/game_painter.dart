@@ -12,6 +12,7 @@ import '../entities/virus.dart';
 import '../game_engine.dart';
 import '../game_mode_type.dart';
 import '../game_settings.dart';
+import '../skin_settings.dart';
 
 class GamePainter extends CustomPainter {
   GamePainter({required this.engine, required Listenable repaint})
@@ -21,16 +22,26 @@ class GamePainter extends CustomPainter {
 
   static const _gridSpacing = 50.0;
 
+  // ── Cached Paint objects (avoid per-frame allocations) ────────────────────
+  final Paint _bgPaint = Paint();
+
   @override
   void paint(Canvas canvas, Size size) {
-    engine.viewportSize = size;
     final settings = GameSettings.instance;
+    // The widget may be wrapped in a Transform.scale to lower the effective
+    // render resolution. We compensate camera zoom so the visible world area
+    // stays identical regardless of renderScale.
+    final renderScale = settings.renderScale;
+    // Expose the ORIGINAL logical size to the engine (minimap relies on this).
+    engine.viewportSize = renderScale == 1.0
+        ? size
+        : Size(size.width / renderScale, size.height / renderScale);
 
-    final bgPaint = Paint()..color = settings.backgroundColor;
-    canvas.drawRect(Offset.zero & size, bgPaint);
+    _bgPaint.color = settings.backgroundColor;
+    canvas.drawRect(Offset.zero & size, _bgPaint);
 
     canvas.save();
-    final zoom = engine.cameraZoom;
+    final zoom = engine.cameraZoom * renderScale;
     canvas.translate(size.width / 2, size.height / 2);
     canvas.scale(zoom);
     canvas.translate(-engine.cameraPos.dx, -engine.cameraPos.dy);
@@ -253,13 +264,20 @@ class GamePainter extends CustomPainter {
     }
 
     // Cache skins for visible players
+    final ss = SkinSettings.instance;
+    final bool useAltFace = ss.isAltFaceActive && ss.altSkinImage != null;
     for (final p in engine.players) {
       if (p.isDead) continue;
       // If player has any visible cells, cache the skin
       bool isVisible = p.cells.any((c) => visibleCells.contains(c));
       if (isVisible) {
-        final skin = p.skinImage;
-        if (skin != null) skinByOwner[p.id] = skin;
+        // For the human player at L3 during a split, swap to the alt face.
+        if (identical(p, engine.humanPlayer) && useAltFace) {
+          skinByOwner[p.id] = ss.altSkinImage!;
+        } else {
+          final skin = p.skinImage;
+          if (skin != null) skinByOwner[p.id] = skin;
+        }
       }
     }
 
@@ -433,6 +451,28 @@ class GamePainter extends CustomPainter {
         canvas.drawCircle(
             c.position, baseR + max(2.0, c.radius * 0.08), glow);
       }
+    }
+
+    // L2 evolution: electric glow ring — shown only while a split is active.
+    if (c.ownerId == engine.humanPlayer.id &&
+        SkinSettings.instance.isGlowActive) {
+      final t = DateTime.now().millisecondsSinceEpoch / 400.0;
+      final pulse = 0.65 + 0.35 * sin(t);
+      final glowPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = max(3.0, baseR * 0.10)
+        ..color = const Color(0xFF00E5FF).withValues(alpha: (0.85 * pulse).clamp(0.0, 1.0))
+        ..maskFilter = MaskFilter.blur(
+          BlurStyle.normal,
+          max(4.0, baseR * 0.20),
+        );
+      canvas.drawCircle(c.position, baseR + max(4.0, baseR * 0.08), glowPaint);
+      // Inner sharp arc for extra crispness
+      final sharpPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = max(1.5, baseR * 0.04)
+        ..color = const Color(0xFFE0F7FA).withValues(alpha: (0.70 * pulse).clamp(0.0, 1.0));
+      canvas.drawCircle(c.position, baseR + max(2.0, baseR * 0.04), sharpPaint);
     }
 
     fillPaint.color = c.color;
