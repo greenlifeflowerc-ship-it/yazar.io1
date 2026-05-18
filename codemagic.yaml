@@ -15,7 +15,17 @@ workflows:
         provisioning_profiles:
           - codemagic.yaml
         certificates:
-          - yazario
+          - yazar
+
+    scripts:
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+
+     _profiles:
+          - codemagic.yaml
+        certificates:
+          - yazar
 
     scripts:
       - name: Get Flutter packages
