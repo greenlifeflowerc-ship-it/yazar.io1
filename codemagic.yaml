@@ -13,9 +13,9 @@ workflows:
       cocoapods: default
       ios_signing:
         provisioning_profiles:
-          - codemagic.yaml
+          - YAZAR_IO_ADHOC_PROFILE
         certificates:
-          - YAZAR_IO_DIST_CERT
+          - yazario
 
     scripts:
       - name: Get Flutter packages
