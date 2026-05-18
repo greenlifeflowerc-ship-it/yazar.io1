@@ -9,10 +9,10 @@ import 'online_entities.dart';
 
 /// Custom painter for the online classic mode.
 ///
-/// The local copy of [controller] gets mutated by `tickInterpolation` from a
-/// Ticker, then `frame` fires and we redraw. Camera follows the predicted
-/// self position so input feels instant; remote players/bots use the
-/// snapshot-driven interpolation in the controller.
+/// Reads smoothed camera position / zoom directly from the controller so the
+/// visual output is frame-rate independent and identical to the offline
+/// GamePainter (same lerp constants, same pellet pulse, same virus geometry,
+/// same cell wobble, same direction arrow).
 class OnlineClassicPainter extends CustomPainter {
   OnlineClassicPainter({
     required this.controller,
@@ -25,25 +25,27 @@ class OnlineClassicPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (size.width <= 0 || size.height <= 0) return; // no usable surface yet
+    if (size.width <= 0 || size.height <= 0) return;
     final settings = GameSettings.instance;
     final renderScale = settings.renderScale;
+
     canvas.drawRect(
       Offset.zero & size,
       Paint()..color = settings.backgroundColor,
     );
 
-    // Camera: follow the predicted self position so movement feels instant.
-    // Zoom scales with self mass. The controller guarantees these are finite.
-    final cx = controller.predictedX.isFinite
-        ? controller.predictedX
+    // Camera: use smoothed position + zoom from the controller.
+    // The controller already applies the zoom formula + lerp; we only multiply
+    // by renderScale here so a downscaled canvas shows the same world area —
+    // exactly matching GamePainter logic.
+    final cx = controller.cameraX.isFinite
+        ? controller.cameraX
         : controller.mapWidth / 2;
-    final cy = controller.predictedY.isFinite
-        ? controller.predictedY
+    final cy = controller.cameraY.isFinite
+        ? controller.cameraY
         : controller.mapHeight / 2;
-    // Multiply by renderScale so a downscaled canvas still shows the same
-    // world area (matches GamePainter logic exactly).
-    final zoom = _zoomForMass(controller.selfMass.toDouble()) * renderScale;
+    final zoom = controller.cameraZoom * renderScale;
+
     canvas.save();
     canvas.translate(size.width / 2, size.height / 2);
     canvas.scale(zoom);
@@ -53,7 +55,6 @@ class OnlineClassicPainter extends CustomPainter {
     final viewH = size.height / zoom;
     final viewport = Rect.fromCenter(
       center: Offset(cx, cy),
-      // A bigger margin makes sure entities right at the edge still draw.
       width: viewW + 400 / zoom,
       height: viewH + 400 / zoom,
     );
@@ -63,17 +64,16 @@ class OnlineClassicPainter extends CustomPainter {
 
     _drawPellets(canvas, viewport);
     _drawEjected(canvas, viewport);
-    _drawViruses(canvas, viewport);
+    _drawViruses(canvas, viewport, zoom);
     _drawCells(canvas, viewport, zoom);
 
-    canvas.restore();
-  }
+    // Direction arrow — drawn in world space after cells, identical to offline.
+    if (!controller.selfDead &&
+        controller.cells.values.any((c) => c.isSelf)) {
+      _drawMobileDirectionArrow(canvas, zoom);
+    }
 
-  double _zoomForMass(double mass) {
-    final m = mass.clamp(10, 1e9).toDouble();
-    final z = pow(64 / m, 0.25).toDouble();
-    final mult = 1.0 / GameSettings.instance.zoomMultiplier;
-    return (z * mult).clamp(0.05, 4.0);
+    canvas.restore();
   }
 
   void _drawGrid(Canvas canvas, Rect view, Color color, double zoom) {
@@ -115,13 +115,13 @@ class OnlineClassicPainter extends CustomPainter {
     if (controller.pellets.isEmpty) return;
     final paint = Paint();
     for (final p in controller.pellets.values) {
-      // Skip invalid entries instead of crashing the canvas.
       if (!p.x.isFinite || !p.y.isFinite || p.radius <= 0) continue;
-      // Locally-predicted eats are hidden until the server confirms.
       if (controller.isPelletEatenLocally(p.id)) continue;
       if (!view.contains(Offset(p.x, p.y))) continue;
+      // Pulse animation — identical to offline GamePainter._drawPellets.
+      final pulse = 1 + sin(p.pulsePhase) * 0.05;
       paint.color = p.color;
-      canvas.drawCircle(Offset(p.x, p.y), p.radius, paint);
+      canvas.drawCircle(Offset(p.x, p.y), p.radius * pulse, paint);
     }
   }
 
@@ -142,14 +142,16 @@ class OnlineClassicPainter extends CustomPainter {
     }
   }
 
-  void _drawViruses(Canvas canvas, Rect view) {
+  void _drawViruses(Canvas canvas, Rect view, double zoom) {
     if (controller.viruses.isEmpty) return;
     final fillPaint = Paint()..color = const Color(0xFF33FF33);
+    // Stroke width zoom-corrected — identical to offline GamePainter.
     final strokePaint = Paint()
       ..color = const Color(0xFF1F8A1F)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 3;
-    const spikes = 28;
+      ..strokeWidth = 3 / zoom;
+    // 45 spikes — matches offline GamePainter._drawSingleVirus.
+    const spikes = 45;
     for (final v in controller.viruses.values) {
       if (!v.x.isFinite || !v.y.isFinite || v.radius <= 0) continue;
       if (!view.contains(Offset(v.x, v.y))) continue;
@@ -185,28 +187,104 @@ class OnlineClassicPainter extends CustomPainter {
       if (!c.renderX.isFinite || !c.renderY.isFinite || r <= 0) continue;
       if (!view.contains(Offset(c.renderX, c.renderY))) continue;
       final pos = Offset(c.renderX, c.renderY);
-      // Self highlight ring drawn behind the cell.
+
+      // Self highlight ring — same as original.
       if (c.isSelf) {
         final ring = Paint()
           ..style = PaintingStyle.stroke
           ..color = const Color(0xFFFFD600).withValues(alpha: 0.8)
           ..strokeWidth = max(3.0, r * 0.12)
-          ..maskFilter = MaskFilter.blur(BlurStyle.normal, max(2.0, r * 0.18));
+          ..maskFilter =
+              MaskFilter.blur(BlurStyle.normal, max(2.0, r * 0.18));
         canvas.drawCircle(pos, r + 4, ring);
       }
+
       fillPaint.color = c.color;
       strokePaint
         ..color = _darken(c.color, 0.25)
         ..strokeWidth = max(2.0, r * 0.05);
 
       final skin = controller.skinFor(c);
-      if (skin != null) {
+
+      // Jelly wobble deformation — mirrors offline GamePainter._drawSingleCell.
+      if (c.bumps.isNotEmpty && quality != 0) {
+        _drawWobblyCell(
+          canvas: canvas,
+          c: c,
+          pos: pos,
+          r: r,
+          skin: skin,
+          fillPaint: fillPaint,
+          strokePaint: strokePaint,
+          filter: filter,
+          quality: quality,
+        );
+      } else if (skin != null) {
         _drawSkinnedCell(canvas, pos, r, skin, fillPaint, strokePaint, filter);
       } else {
         canvas.drawCircle(pos, r, fillPaint);
         canvas.drawCircle(pos, r, strokePaint);
       }
+
       _drawLabel(canvas, c, zoom);
+    }
+  }
+
+  /// Jelly deformation — identical algorithm to offline GamePainter.
+  void _drawWobblyCell({
+    required Canvas canvas,
+    required OnlineCell c,
+    required Offset pos,
+    required double r,
+    required ui.Image? skin,
+    required Paint fillPaint,
+    required Paint strokePaint,
+    required FilterQuality filter,
+    required int quality,
+  }) {
+    final path = Path();
+    final vertices = quality == 1 ? 60 : 120;
+    for (int i = 0; i <= vertices; i++) {
+      final vAng = (i / vertices) * 2 * pi;
+      double deformation = 0;
+      for (final bump in c.bumps) {
+        double diff = (vAng - bump.angle).abs();
+        if (diff > pi) diff = 2 * pi - diff;
+        const influenceRange = 0.4;
+        if (diff < influenceRange) {
+          final weight = 0.5 * (1.0 + cos((diff / influenceRange) * pi));
+          deformation += bump.magnitude * weight;
+        }
+      }
+      final rr = r * (1.0 + deformation);
+      final p =
+          Offset(pos.dx + cos(vAng) * rr, pos.dy + sin(vAng) * rr);
+      if (i == 0) {
+        path.moveTo(p.dx, p.dy);
+      } else {
+        path.lineTo(p.dx, p.dy);
+      }
+    }
+    path.close();
+
+    if (skin != null) {
+      canvas.drawPath(path, fillPaint);
+      canvas.save();
+      canvas.clipPath(path);
+      final dst = Rect.fromCenter(
+          center: pos, width: r * 2.2, height: r * 2.2);
+      canvas.drawImageRect(
+        skin,
+        Rect.fromLTWH(
+            0, 0, skin.width.toDouble(), skin.height.toDouble()),
+        dst,
+        Paint()..filterQuality = filter,
+      );
+      canvas.restore();
+      canvas.drawPath(path, strokePaint);
+    } else {
+      canvas.drawPath(path, fillPaint);
+      canvas.drawPath(path, strokePaint);
     }
   }
 
@@ -219,11 +297,10 @@ class OnlineClassicPainter extends CustomPainter {
     Paint strokePaint,
     FilterQuality filter,
   ) {
-    // Same technique as the offline GamePainter: fill the colour underneath,
-    // clip to a perfect circle, blit the skin, then stroke the outline.
     canvas.drawCircle(pos, r, fillPaint);
     canvas.save();
-    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: pos, radius: r)));
+    canvas.clipPath(
+        Path()..addOval(Rect.fromCircle(center: pos, radius: r)));
     canvas.drawImageRect(
       skin,
       Rect.fromLTWH(0, 0, skin.width.toDouble(), skin.height.toDouble()),
@@ -232,6 +309,67 @@ class OnlineClassicPainter extends CustomPainter {
     );
     canvas.restore();
     canvas.drawCircle(pos, r, strokePaint);
+  }
+
+  /// Direction arrow — identical to offline GamePainter._drawMobileDirectionArrow.
+  void _drawMobileDirectionArrow(Canvas canvas, double zoom) {
+    final dir = controller.lastNonZeroInputDir;
+    if (dir.distance < 0.05) return;
+
+    // Compute mass-weighted center and max extent of self cells.
+    double cx = 0, cy = 0, totalMass = 0, maxDist = 0;
+    for (final c in controller.cells.values) {
+      if (!c.isSelf) continue;
+      cx += c.renderX * c.renderMass;
+      cy += c.renderY * c.renderMass;
+      totalMass += c.renderMass;
+    }
+    if (totalMass <= 0) return;
+    cx /= totalMass;
+    cy /= totalMass;
+    final center = Offset(cx, cy);
+
+    for (final c in controller.cells.values) {
+      if (!c.isSelf) continue;
+      final d =
+          (Offset(c.renderX, c.renderY) - center).distance + c.renderRadius;
+      if (d > maxDist) maxDist = d;
+    }
+
+    final unit = dir / dir.distance;
+    final arrowDist = maxDist + 10.0;
+    final arrowCenter = center + unit * arrowDist;
+    final perp = Offset(-unit.dy, unit.dx);
+
+    final length = 30.0 / zoom;
+    final width = 35.0 / zoom;
+    final backIndentation = 8.0 / zoom;
+
+    final tip = arrowCenter + unit * length;
+    final p1 = arrowCenter + perp * (width / 2);
+    final p2 = arrowCenter - perp * (width / 2);
+    final backCenter = arrowCenter + unit * backIndentation;
+
+    final path = Path()
+      ..moveTo(tip.dx, tip.dy)
+      ..lineTo(p1.dx, p1.dy)
+      ..lineTo(backCenter.dx, backCenter.dy)
+      ..lineTo(p2.dx, p2.dy)
+      ..close();
+
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = Colors.white.withValues(alpha: 0.4)
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = Colors.white.withValues(alpha: 0.1)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0,
+    );
   }
 
   void _drawLabel(Canvas canvas, OnlineCell c, double zoom) {

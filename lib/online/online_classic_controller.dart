@@ -7,6 +7,7 @@ import 'package:flutter/widgets.dart';
 
 import '../core/config/server_config.dart';
 import '../game/game_engine.dart' show GameConstants;
+import '../game/game_settings.dart';
 import '../game/skin_registry.dart';
 import '../game/skin_settings.dart';
 import '../network/online_socket_service.dart';
@@ -17,8 +18,8 @@ import 'online_entities.dart';
 /// - Subscribes to the socket service.
 /// - Maps incoming snapshot JSON into in-memory entity maps.
 /// - Drives interpolation toward server targets every frame.
-/// - Runs light client-side prediction for the local player so movement feels
-///   instant even at 25 Hz state cadence; server snapshots smoothly correct.
+/// - Runs client-side prediction + camera/zoom smoothing identical to the
+///   offline GameEngine so the feel is 1:1.
 /// - Throttles outgoing input so the server isn't spammed.
 /// - Exposes a `ChangeNotifier`-style ticker (`frame`) the renderer can listen to.
 class OnlineClassicController {
@@ -62,17 +63,27 @@ class OnlineClassicController {
 
   // Smoothed round-trip latency in ms. -1 means we haven't measured yet.
   int pingMs = -1;
-  static const _pingSmoothing = 0.3; // 0 = stick, 1 = always replace
+  static const _pingSmoothing = 0.3;
 
-  // Server-reported self center. Used as the prediction target for smoothing.
+  // Server-reported self center.
   double serverSelfX = 4000;
   double serverSelfY = 4000;
 
-  // Predicted self center: this is what the camera/painter actually read.
-  // Updated locally from joystick input each frame, then smooth-corrected
-  // toward the server position when snapshots arrive.
+  // Predicted self center: updated locally from joystick input each frame,
+  // then smooth-corrected toward the server position when snapshots arrive.
   double selfX = 4000;
   double selfY = 4000;
+
+  // ── Camera smoothing — identical time constant to offline GameEngine ──────
+  // Offline: `cameraPos = Offset.lerp(cameraPos, target, 0.1)` per frame at
+  // 60 fps → equivalent to 1 - exp(-6.32 * dt) in continuous time.
+  double cameraX = 4000;
+  double cameraY = 4000;
+  double cameraZoom = 1.0;
+
+  // ── Input tracking for stopOnRelease (matches offline lastNonZeroDir) ─────
+  Offset inputDir = Offset.zero;
+  Offset lastNonZeroInputDir = const Offset(1, 0);
 
   // Convenience accessors for the renderer/screen.
   double get predictedX => selfX;
@@ -90,21 +101,24 @@ class OnlineClassicController {
   final _connNotifier = ValueNotifier<OnlineConnState>(OnlineConnState.idle);
   ValueListenable<OnlineConnState> get connectionListenable => _connNotifier;
 
-  /// True once we've received at least one full `state` snapshot from the
-  /// server. Used by the screen to gate the game render + death overlay —
-  /// neither should appear before we actually have data.
   bool hasFirstState = false;
   final _readyNotifier = ValueNotifier<bool>(false);
   ValueListenable<bool> get readyListenable => _readyNotifier;
-
-  // Input is held as a unit vector. The renderer updates it; we flush over
-  // the network on a fixed cadence below.
-  Offset inputDir = Offset.zero;
 
   Timer? _inputTimer;
   Offset _lastSentInput = const Offset(2, 2); // sentinel: never matches
 
   bool _disposed = false;
+
+  /// Effective input direction, respecting the `stopOnRelease` setting.
+  /// When joystick is released and stopOnRelease is off, we keep the last
+  /// known direction — identical to offline's `lastNonZeroDir` logic.
+  Offset get _effectiveInputDir {
+    if (inputDir.distance > 0.05) return inputDir;
+    return GameSettings.instance.stopOnRelease
+        ? Offset.zero
+        : lastNonZeroInputDir;
+  }
 
   /// Open the connection and start the per-frame interpolation loop.
   Future<void> start() async {
@@ -117,12 +131,11 @@ class OnlineClassicController {
       playerName: playerName.trim().isEmpty ? 'Player' : playerName,
       skin: SkinSettings.instance.skinPath ?? '',
     );
-    // Input pump: 50 Hz (20 ms) — matches server tick rate so movement
-    // updates arrive in the same frame as the next simulation step.
-    // Skips sends when the input vector hasn't changed enough to matter.
+    // Input pump at 50 Hz — uses effectiveInputDir so stopOnRelease is
+    // honoured on the server side too.
     _inputTimer = Timer.periodic(const Duration(milliseconds: 20), (_) {
       if (_disposed) return;
-      final v = _clampInput(inputDir);
+      final v = _clampInput(_effectiveInputDir);
       if ((v - _lastSentInput).distance < 0.01) return;
       socket.sendInput(v.dx, v.dy);
       _lastSentInput = v;
@@ -135,15 +148,11 @@ class OnlineClassicController {
     return v;
   }
 
-  /// Local cooldown timestamp for the split button — mirrors the server's
-  /// SPLIT_COOLDOWN_MS so the button can grey out between presses without a
-  /// round-trip. The actual gate is on the server; we only suppress visual
-  /// re-presses inside the cooldown window.
+  /// Local cooldown timestamp for the split button.
   int _splitReadyAtMs = 0;
   static const int _splitCooldownMs = 800;
   bool get canSplit =>
-      !selfDead &&
-          DateTime.now().millisecondsSinceEpoch >= _splitReadyAtMs;
+      !selfDead && DateTime.now().millisecondsSinceEpoch >= _splitReadyAtMs;
 
   void sendSplit() {
     if (selfDead) {
@@ -163,9 +172,6 @@ class OnlineClassicController {
     socket.sendEject();
   }
 
-  /// No-op on the wire today (Offline Classic doesn't expose a press-to-
-  /// boost button), but kept so feature gating elsewhere can call it
-  /// unconditionally.
   void sendBoost(bool active) {
     if (selfDead) return;
     socket.sendBoost(active);
@@ -175,9 +181,7 @@ class OnlineClassicController {
     if (selfDead) socket.sendRespawn();
   }
 
-  /// Displayed mass = server-authoritative mass + any unconfirmed predicted
-  /// pellet eats. Predicted delta decays as the server reports growth, so
-  /// the visible number can only ever lead reality — never lag it.
+  /// Displayed mass = server mass + unconfirmed predicted pellet eats.
   int get displayedMass => selfMass + _predictedMassDelta;
 
   /// True while a local prediction is hiding this pellet.
@@ -187,46 +191,99 @@ class OnlineClassicController {
     return DateTime.now().millisecondsSinceEpoch < exp;
   }
 
+  // ── Camera helpers ─────────────────────────────────────────────────────────
+
+  double _targetCameraX() {
+    final selfCells = <OnlineCell>[];
+    for (final c in cells.values) {
+      if (c.isSelf) selfCells.add(c);
+    }
+    if (selfCells.isEmpty) return selfX;
+    // Single cell: use the prediction-smoothed position so the camera tracks
+    // input instantly, identical to offline.
+    if (selfCells.length == 1) return selfX;
+    // Multi-cell (post-split): mass-weighted center of all fragments.
+    double cx = 0, tm = 0;
+    for (final c in selfCells) {
+      cx += c.renderX * c.renderMass;
+      tm += c.renderMass;
+    }
+    return tm > 0 ? cx / tm : selfX;
+  }
+
+  double _targetCameraY() {
+    final selfCells = <OnlineCell>[];
+    for (final c in cells.values) {
+      if (c.isSelf) selfCells.add(c);
+    }
+    if (selfCells.isEmpty) return selfY;
+    if (selfCells.length == 1) return selfY;
+    double cy = 0, tm = 0;
+    for (final c in selfCells) {
+      cy += c.renderY * c.renderMass;
+      tm += c.renderMass;
+    }
+    return tm > 0 ? cy / tm : selfY;
+  }
+
+  /// Target zoom — identical formula to offline GameEngine._targetZoom().
+  double _targetZoom() {
+    double totalMass = 0;
+    for (final c in cells.values) {
+      if (c.isSelf) totalMass += c.renderMass;
+    }
+    if (totalMass < 10) totalMass = selfMass.clamp(10, 1 << 30).toDouble();
+    final m = totalMass.clamp(10.0, 1e9);
+    final z = pow(64.0 / m, 0.25).toDouble();
+    final mult = 1.0 / GameSettings.instance.zoomMultiplier;
+    return (z * mult).clamp(0.01, 4.0);
+  }
+
+  // ── Main interpolation tick ────────────────────────────────────────────────
+
   /// Drive interpolation + local prediction. Call from a Ticker each frame
   /// with the delta time.
   void tickInterpolation(double dt) {
-    // 1. Exponential blend toward server-confirmed targets. With 50 Hz
-    //    snapshots arriving every 20 ms, rate 40 gives a ~25 ms time
-    //    constant — tight enough for real-time tracking, loose enough to
-    //    smooth packet jitter.
+    // Track last non-zero direction for stopOnRelease support — mirrors
+    // offline's `if (moveDir.distance > 0.05) lastNonZeroDir = moveDir`.
+    if (inputDir.distance > 0.05) lastNonZeroInputDir = inputDir;
+
+    // 1. Exponential blend toward server-confirmed targets. Rate 40 gives a
+    //    ~25 ms time constant at 50 Hz snapshots — tight but jitter-free.
     final t = 1 - exp(-40 * dt);
     for (final c in cells.values) {
       c.interpolate(t);
+      // Wobble phase + jelly bump decay — identical to offline _integrateCells.
+      c.wobblePhase += dt * 4;
+      if (c.bumps.isNotEmpty) {
+        final bumpDecay = exp(-6.0 * dt);
+        for (int i = c.bumps.length - 1; i >= 0; i--) {
+          c.bumps[i].magnitude *= bumpDecay;
+          if (c.bumps[i].magnitude < 0.005) c.bumps.removeAt(i);
+        }
+      }
     }
     for (final e in ejected.values) {
       e.interpolate(t);
     }
 
-    // 2. Client-side prediction for the local player. We move the predicted
-    //    center by joystick input * Classic speed curve per frame, then
-    //    blend it toward the server's reported self center to absorb any
-    //    drift without snapping.
+    // 2. Client-side prediction for the local player. Uses effectiveInputDir
+    //    so stopOnRelease is respected locally too.
     if (!selfDead) {
-      final unit = _clampInput(inputDir);
+      final effectiveDir = _effectiveInputDir;
+      final unit = _clampInput(effectiveDir);
       if (unit != Offset.zero) {
         final speed = _classicSpeedForMass(selfMass.toDouble());
         selfX += unit.dx * speed * dt;
         selfY += unit.dy * speed * dt;
       }
-      // Smooth-correct toward the server-authoritative position. Three
-      // regimes:
-      //   • drift < deadzone (50 u) → trust prediction entirely. The
-      //     normal RTT × speed gap (~20–40 u) falls inside this window, so
-      //     we never drag the local player backward and the input feels
-      //     truly real-time.
-      //   • drift < snap → gentle correction. Recovers from impulses
-      //     (split, virus bounce, edge clamp) without rubber-banding.
-      //   • drift ≥ snap → teleport. Respawn or a packet gap landed us
-      //     somewhere completely different.
+      // Smooth-correct toward server position. Three regimes:
+      //   • drift < deadzone (35 u) → trust prediction entirely.
+      //   • drift < snap (200 u) → gentle correction for impulse recovery.
+      //   • drift ≥ snap → teleport (respawn / packet gap).
       final ex = selfX - serverSelfX;
       final ey = selfY - serverSelfY;
       final err = ex * ex + ey * ey;
-      // Tighter deadzone now that snapshots are 20 ms apart instead of 33 ms.
       const double deadzone = 35.0;
       const double snap = 200.0;
       if (err > snap * snap) {
@@ -237,50 +294,51 @@ class OnlineClassicController {
         selfX = selfX + (serverSelfX - selfX) * blend;
         selfY = selfY + (serverSelfY - selfY) * blend;
       }
-      // Keep predicted position inside the world. Server clamps too, but this
-      // stops the camera from drifting off if we mash the joystick at an edge.
+      // World bounds.
       if (selfX < 0) selfX = 0;
       if (selfX > mapWidth) selfX = mapWidth;
       if (selfY < 0) selfY = 0;
       if (selfY > mapHeight) selfY = mapHeight;
     }
 
-    // 3. Mirror predicted position back onto the local self cell so the
-    //    rendered blob tracks the joystick instantly. The prediction step
-    //    already smooths the server correction, so we can set this directly
-    //    without an extra lerp — no visual delay on the local player.
-    //    Also predict mass/radius growth from confirmed-locally eats so the
-    //    cell visibly grows the instant pellets are consumed — the server
-    //    snapshot arriving 30–40 ms later just confirms what we've already
-    //    drawn.
+    // 3. Mirror predicted position back onto the local self cell (single-cell
+    //    case). Multi-cell: server per-cell positions drive it via step 1.
     if (!selfDead) {
       final selfCells = <OnlineCell>[];
       for (final c in cells.values) {
         if (c.isSelf) selfCells.add(c);
       }
       if (selfCells.length == 1) {
-        // Single-cell case: easy — funnel the whole displayed mass into it.
         final c = selfCells.first;
         c.renderX = selfX;
         c.renderY = selfY;
         final dm = displayedMass.toDouble();
         if (dm > c.renderMass) {
           c.renderMass = dm;
-          // r = sqrt(m / pi) * 10 (matches server geometry).
           c.renderRadius = sqrt(dm / pi) * 10;
         }
       }
-      // Multi-cell (post-split): the server's per-cell positions are the
-      // only sane source of truth — each fragment has its own dash velocity
-      // and merge state. We let the standard interpolation in step 1 flow
-      // through untouched so the cells don't collapse onto a single point.
     }
 
-    // 4. Pellet eat prediction. Walk our self cells against the pellet map
-    //    and hide any pellet whose center is inside one of our cells — the
-    //    server will catch up within a tick or two, and our display mass
-    //    already accounts for the predicted gain via `_predictedMassDelta`.
+    // 4. Pellet eat prediction + jelly bumps.
     _predictPelletEats();
+
+    // 5. Advance pellet pulse phases — identical to offline engine pellet tick.
+    for (final p in pellets.values) {
+      p.pulsePhase += dt * 3;
+    }
+
+    // 6. Camera smoothing — 1 - exp(-6.32 * dt) matches offline's 0.1/frame
+    //    coefficient at 60 fps. Only moves while alive.
+    if (!selfDead) {
+      final camLerp = 1 - exp(-6.32 * dt);
+      final txCamera = _targetCameraX();
+      final tyCamera = _targetCameraY();
+      cameraX += (txCamera - cameraX) * camLerp;
+      cameraY += (tyCamera - cameraY) * camLerp;
+      final targetZoom = _targetZoom();
+      cameraZoom += (targetZoom - cameraZoom) * camLerp;
+    }
 
     frame.value++;
   }
@@ -294,12 +352,9 @@ class OnlineClassicController {
     }
     if (selfCells.isEmpty) return;
     final now = DateTime.now().millisecondsSinceEpoch;
-    // Expire stale entries first so the delta doesn't grow unboundedly.
+    // Expire stale entries.
     _eatenPelletExpiry.removeWhere((id, expiry) {
       if (expiry > now) return false;
-      // When the prediction expires we drop its mass contribution too — the
-      // server should've reported the gain by now, but cap at zero in case
-      // the eat was rejected.
       _predictedMassDelta -= 1;
       if (_predictedMassDelta < 0) _predictedMassDelta = 0;
       return true;
@@ -312,7 +367,9 @@ class OnlineClassicController {
         final rr = c.renderRadius;
         if (dx * dx + dy * dy < rr * rr) {
           _eatenPelletExpiry[p.id] = now + _predictedEatTtlMs;
-          _predictedMassDelta += 1; // server pellet mass is always 1
+          _predictedMassDelta += 1;
+          // Jelly bump at the angle of the eaten pellet — mirrors offline.
+          c.addBump(atan2(dy, dx), 0.04);
           break;
         }
       }
@@ -325,7 +382,6 @@ class OnlineClassicController {
       GameConstants.inputMoveStrength / GameConstants.dampingPerSecond;
   double _classicSpeedForMass(double mass) {
     final m = mass < 1 ? 1.0 : mass;
-    // r = sqrt(m / pi) * 10  (matches server radius() and offline geometry)
     final r = sqrt(m / pi) * 10;
     final maxSpeed = GameConstants.maxSpeedForRadius(r);
     return maxSpeed < _classicTerminal ? maxSpeed : _classicTerminal;
@@ -364,20 +420,13 @@ class OnlineClassicController {
     }
   }
 
-  /// Reconcile a server snapshot with our local entity maps. Anything not in
-  /// the snapshot (and which is older than 1.5 s) gets dropped.
   void _applyState(Map<String, dynamic> msg) {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
 
-    // ── self. Only treat the player as dead once the server has actually
-    // told us so — `dead == true` strictly. Missing fields stay at their
-    // previous values, so we don't flicker between alive/dead.
     final self = msg['self'] as Map<String, dynamic>?;
     if (self != null) {
       final newMass = (self['mass'] as num?)?.toInt();
       if (newMass != null) {
-        // Reconcile predicted-eat delta: every mass point the server adds is
-        // one less prediction we need to keep on top. Never go below zero.
         final delta = newMass - _lastServerMass;
         if (delta > 0 && _predictedMassDelta > 0) {
           _predictedMassDelta -= delta;
@@ -386,8 +435,6 @@ class OnlineClassicController {
         _lastServerMass = newMass;
         selfMass = newMass;
       }
-      // dead defaults to false; only `true` flips it on. This is the key
-      // fix for the "dead before connected" bug.
       final deadField = self['dead'];
       final wasDead = selfDead;
       if (deadField is bool) selfDead = deadField;
@@ -395,26 +442,26 @@ class OnlineClassicController {
       final newY = (self['y'] as num?)?.toDouble();
       if (newX != null && newX.isFinite) serverSelfX = newX;
       if (newY != null && newY.isFinite) serverSelfY = newY;
-      // On (re)spawn the predicted center must teleport to the server position
-      // — otherwise it'd lerp across the entire map.
+      // Teleport predicted position + camera on respawn.
       if (wasDead && !selfDead) {
         selfX = serverSelfX;
         selfY = serverSelfY;
-        // Fresh life: drop any stale eat predictions so we start from a
-        // clean baseline.
+        cameraX = serverSelfX;
+        cameraY = serverSelfY;
         _eatenPelletExpiry.clear();
         _predictedMassDelta = 0;
       }
     }
     onlineCount = (msg['online'] as num?)?.toInt() ?? onlineCount;
 
-    // Mark first real state — gates the loading screen. Initialise the
-    // predicted center to the server position so the camera doesn't start
-    // mid-world and slide toward the player.
+    // Mark first real state — teleport camera so it doesn't slide from center.
     if (!hasFirstState) {
       hasFirstState = true;
       selfX = serverSelfX;
       selfY = serverSelfY;
+      cameraX = serverSelfX;
+      cameraY = serverSelfY;
+      cameraZoom = _targetZoom();
       _readyNotifier.value = true;
     }
 
@@ -432,15 +479,9 @@ class OnlineClassicController {
         existing.updateFromJson(j, nowMs);
       }
     }
-    // Tighter stale window so cells eaten right next to us don't linger on
-    // screen for a second. 600 ms is still enough to absorb a brief snapshot
-    // gap (the server ticks at 25 Hz, so any live cell is reconfirmed every
-    // ~40 ms).
     cells.removeWhere((id, c) => nowMs - c.lastSnapshotMs > 600);
 
-    // ── pellets / viruses arrive at HALF the cell rate (25 Hz, every other
-    // tick). Only refresh + prune when the snapshot actually includes them,
-    // otherwise the client would briefly empty out twice a second.
+    // ── pellets / viruses (half-rate)
     final pelletsRaw = msg['pellets'];
     if (pelletsRaw is List) {
       for (final raw in pelletsRaw) {
@@ -475,7 +516,7 @@ class OnlineClassicController {
       viruses.removeWhere((id, v) => nowMs - v.lastSnapshotMs > 3000);
     }
 
-    // ── ejected (feed)
+    // ── ejected
     final ejectedJson = (msg['ejected'] as List?) ?? const [];
     for (final raw in ejectedJson) {
       final j = raw as Map<String, dynamic>;
@@ -498,9 +539,7 @@ class OnlineClassicController {
         .toList(growable: false);
   }
 
-  /// Resolve a skin image for the given cell. Self → user's selected skin
-  /// (decoded once on profile load). Others → deterministic pick from the
-  /// local SkinRegistry so each remote owner has a stable visual.
+  /// Resolve a skin image for the given cell.
   ui.Image? skinFor(OnlineCell c) {
     if (c.isSelf) return SkinSettings.instance.skinImage;
     final key = '${c.ownerId}|${c.skinId}';
@@ -512,9 +551,6 @@ class OnlineClassicController {
     }
     final h = _stableHash(key);
     final idx = h % reg.count;
-    // SkinRegistry has no public indexer, but `randomSkin` is seeded by a
-    // Random — we just want a stable image per key. Build a Random from the
-    // hash so each owner consistently lands on the same image.
     final img = reg.randomSkin(Random(idx));
     _skinCache[key] = img;
     return img;
@@ -528,7 +564,6 @@ class OnlineClassicController {
     return h;
   }
 
-  /// Ask the controller to fully reconnect (e.g. user tapped "Retry").
   Future<void> retry() async {
     hasFirstState = false;
     _readyNotifier.value = false;
@@ -542,6 +577,9 @@ class OnlineClassicController {
     _lastServerMass = 0;
     leaderboard = const [];
     selfDead = false;
+    cameraX = mapWidth / 2;
+    cameraY = mapHeight / 2;
+    cameraZoom = 1.0;
     await socket.close();
     await socket.connect(
       playerName: playerName.trim().isEmpty ? 'Player' : playerName,

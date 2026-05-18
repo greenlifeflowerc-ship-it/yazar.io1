@@ -45,6 +45,9 @@ class _OnlineClassicScreenState extends State<OnlineClassicScreen>
   bool _draggingEject2 = false;
   bool _draggingSplit = false;
 
+  // Smoothed FPS counter — same formula as Offline Classic.
+  double _smoothedFps = 60;
+
   // Hold-to-eject timers for the two feed buttons.
   Timer? _ejectHoldTimer;
   Timer? _ejectHoldTimer2;
@@ -122,6 +125,11 @@ class _OnlineClassicScreenState extends State<OnlineClassicScreen>
 
     _last = elapsed;
     final clamped = dt.clamp(0.0, 0.05);
+
+    // Smoothed FPS — same formula as Offline Classic.
+    if (clamped > 0) {
+      _smoothedFps = _smoothedFps * 0.92 + (1.0 / clamped) * 0.08;
+    }
 
     // PC mode: derive input direction from mouse position relative to the
     // screen center. Same shape as Offline Classic — max input magnitude is
@@ -340,6 +348,32 @@ class _OnlineClassicScreenState extends State<OnlineClassicScreen>
                   ),
                 ),
               ),
+
+              // 4a. FPS counter (top-center) — mirrors Offline Classic.
+              if (GameSettings.instance.showFps)
+                Positioned(
+                  top: 14,
+                  left: 0,
+                  right: 0,
+                  child: IgnorePointer(
+                    child: Center(
+                      child: ValueListenableBuilder<int>(
+                        valueListenable: _controller.hud,
+                        builder: (context, _, __) => Text(
+                          'FPS ${_smoothedFps.toStringAsFixed(0)}',
+                          style: GoogleFonts.baloo2(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            shadows: const [
+                              Shadow(color: Colors.black87, blurRadius: 2),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
 
               // 4. Leaderboard (top-right).
               SafeArea(

@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 
 /// Plain data containers for the entities the server sends every tick.
@@ -11,6 +13,13 @@ Color _parseHex(String hex) {
   if (h.length == 6) h = 'FF$h';
   final v = int.tryParse(h, radix: 16);
   return Color(v ?? 0xFFFFFFFF);
+}
+
+/// Mirrors offline CellBump for jelly deformation on eating events.
+class OnlineCellBump {
+  OnlineCellBump(this.angle, this.magnitude);
+  final double angle;
+  double magnitude;
 }
 
 class OnlineCell {
@@ -29,7 +38,8 @@ class OnlineCell {
   })  : renderX = targetX,
         renderY = targetY,
         renderMass = targetMass,
-        renderRadius = targetRadius;
+        renderRadius = targetRadius,
+        wobblePhase = Random().nextDouble() * pi * 2;
 
   final String id;
   String name;
@@ -49,17 +59,31 @@ class OnlineCell {
   double renderMass;
   double renderRadius;
 
+  // Wobble / jelly — mirrors offline Cell exactly.
+  double wobblePhase;
+  final List<OnlineCellBump> bumps = [];
+
   /// Mark how recently this entity was confirmed by the server. Stale ones
   /// (never resent) are pruned by the controller.
   int lastSnapshotMs = 0;
 
   /// Smoothly move the rendered state toward the latest server target.
-  /// `t` is a 0..1 blend (e.g. `1 - exp(-15 * dt)`).
+  /// `t` is a 0..1 blend (e.g. `1 - exp(-40 * dt)`).
   void interpolate(double t) {
     renderX = _lerp(renderX, targetX, t);
     renderY = _lerp(renderY, targetY, t);
     renderMass = _lerp(renderMass, targetMass, t);
     renderRadius = _lerp(renderRadius, targetRadius, t);
+  }
+
+  /// Add a jelly-bump from an eating/impact event. Mirrors offline Cell.addBump.
+  void addBump(double angle, double intensity) {
+    final stiffnessScale =
+        pow(100.0 / max(100.0, renderMass), 0.2).toDouble();
+    final scaledIntensity =
+        (intensity * 0.2 * stiffnessScale).clamp(0.0, 0.015);
+    if (bumps.length > 4) bumps.removeAt(0);
+    bumps.add(OnlineCellBump(angle, scaledIntensity));
   }
 
   static double _lerp(double a, double b, double t) => a + (b - a) * t;
@@ -95,8 +119,8 @@ class OnlineCell {
   }
 }
 
-/// Pellets and viruses don't move between updates, so they don't need
-/// interpolation — we just store the target position as the render position.
+/// Pellets don't move between updates, so we only need to store their position.
+/// pulsePhase is advanced locally each frame to match offline's pulsing pellets.
 class OnlinePellet {
   OnlinePellet({
     required this.id,
@@ -104,20 +128,20 @@ class OnlinePellet {
     required this.y,
     required this.radius,
     required this.color,
-  });
+  }) : pulsePhase = x * 0.017 + y * 0.013; // deterministic spread, matches offline visual variety
 
   final String id;
   double x;
   double y;
   double radius;
   Color color;
+  double pulsePhase;
   int lastSnapshotMs = 0;
 
   factory OnlinePellet.fromJson(Map<String, dynamic> j) => OnlinePellet(
         id: j['id'] as String,
         x: (j['x'] as num).toDouble(),
         y: (j['y'] as num).toDouble(),
-        // Server strips constant fields; default to the pellet baseline.
         radius: (j['radius'] as num?)?.toDouble() ?? 6.0,
         color: _parseHex(j['color'] as String? ?? '#FFFFFF'),
       );
@@ -161,7 +185,7 @@ class OnlineVirus {
   }
 }
 
-/// Ejected mass (feed). Moves on the server; we just lerp render position
+/// Ejected mass (feed). Moves on the server; we lerp render position
 /// toward each snapshot target so it doesn't stutter at 25 Hz.
 class OnlineEjected {
   OnlineEjected({
