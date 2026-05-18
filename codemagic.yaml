@@ -1,6 +1,6 @@
 workflows:
   ios-adhoc:
-    name: YAZAR.IO iOS Ad Hoc IPA
+    name: "YAZAR.IO iOS Ad Hoc IPA"
     max_build_duration: 120
     instance_type: mac_mini_m2
 
@@ -13,19 +13,9 @@ workflows:
       cocoapods: default
       ios_signing:
         provisioning_profiles:
-          - codemagic.yaml
+          - "codemagic.yaml"
         certificates:
-          - yazar
-
-    scripts:
-      - name: Get Flutter packages
-        script: |
-          flutter pub get
-
-     _profiles:
-          - codemagic.yaml
-        certificates:
-          - yazar
+          - "yazar"
 
     scripts:
       - name: Get Flutter packages
